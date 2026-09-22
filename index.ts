@@ -17,7 +17,9 @@
  * 交给 WorkingStatusIndicator 同时给 spinner 和文案上色，
  * 因此 working 自动和边框同色。
  *
- * 安装位置：~/.pi/agent/extensions/editor-border.ts（全局自动发现）
+ * 安装方式（二选一）：
+ *   1. package 方式：pi install /绝对路径/pi-dragon-theme（或 pi install git:github.com/xxx/pi-dragon-theme）
+ *   2. 手拷方式：把 index.ts 与 rounded-frame.ts 一起放进 ~/.pi/agent/extensions/
  * 生效方式：重启 pi（首次新增文件），之后改动可用 /reload
  */
 
