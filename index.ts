@@ -27,6 +27,7 @@ import {
 	type KeybindingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+import { installRoundedCustom, type RoundedDialogsConfig } from "./rounded-frame.ts";
 
 // ─────────────────────────────── 配置 ───────────────────────────────
 
@@ -73,6 +74,19 @@ const WORKING_ROTATE_MS = 4000;
 
 /** 随机文案后面要不要加省略号，跟 Claude 一样那种。 */
 const WORKING_SUFFIX = "…";
+
+/**
+ * 给所有扩展的 `ctx.ui.custom()` 弹框套圆角边框。
+ * 关掉就设 ENABLED = false；只想给 overlay 浮层加就设 OVERLAY_ONLY = true。
+ * 注意：内置的 select / confirm / input / editor 不走 custom，不受影响。
+ */
+const ROUNDED_ENABLED = true;
+const ROUNDED_CONFIG: RoundedDialogsConfig = {
+	borderColor: "accent",
+	paddingX: 1,
+	paddingY: 0,
+	overlayOnly: false,
+};
 
 // ─────────────────────────────── 着色 ───────────────────────────────
 
@@ -210,8 +224,19 @@ export default function (pi: ExtensionAPI) {
 		if (WORKING_WORDS.length === 0 && WORKING_TEXT) {
 			ctx.ui.setWorkingMessage(WORKING_TEXT);
 		}
+
+		const mode = ctx.ui.theme.getColorMode() as ColorMode;
+
+		// 包装共享的 ctx.ui.custom，之后任何扩展的 custom 弹框都会被套上圆角框。
+		// /reload 会重建 uiContext，所以每次 session_start 都要重新装一遍（幂等）。
+		if (ROUNDED_ENABLED) {
+			// border 用和输入框边框同一个 BORDER_HEX，两者永远同色。
+			installRoundedCustom(ctx.ui, ctx.ui.theme, {
+				...ROUNDED_CONFIG,
+				border: makeColorFn(BORDER_HEX, mode),
+			});
+		}
 		ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-			const mode = ctx.ui.theme.getColorMode() as ColorMode;
 			return new FixedBorderEditor(
 				tui,
 				theme,
