@@ -11,7 +11,7 @@ Dragon Ball / Namek-flavored pi extension. Three tweaks to the TUI:
 ```bash
 pi install /abs/path/to/pi-dragon-theme
 # or
-pi install git:github.com/<you>/pi-dragon-theme
+pi install git:github.com/oahcz-7891/pi-dragon-theme
 ```
 
 Restart pi. Later edits: `/reload`.
