@@ -30,6 +30,7 @@
 import {
 	CustomEditor,
 	type ExtensionAPI,
+	type ExtensionContext,
 	type KeybindingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
@@ -39,10 +40,22 @@ import type {
 	TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { installRoundedCustom, type RoundedDialogsConfig } from "./rounded-frame.ts";
+import { PalettePicker } from "./picker.ts";
+import {
+	PALETTES,
+	readSavedHex,
+	resolvePalette,
+	saveHex,
+} from "./palette.ts";
 
 // ─────────────────────────────── 配置 ───────────────────────────────
 
-/** 边框颜色，6 位 hex。 */
+/**
+ * 默认边框颜色，6 位 hex。原方案 = 悟空金 #f0c674。
+ *
+ * 只是默认值：`/dragon` 保存过选择时会被它覆盖（见 palette.ts）；
+ * 想回到它就用 `/dragon goku`。
+ */
 const BORDER_HEX = "#f0c674";
 
 /**
@@ -147,6 +160,45 @@ function makeColorFn(hex: string, mode: ColorMode): ColorFn {
 	const ansi =
 		mode === "truecolor" ? `\x1b[38;2;${r};${g};${b}m` : `\x1b[38;5;${rgbTo256(r, g, b)}m`;
 	return (text: string) => `${ansi}${text}\x1b[39m`;
+}
+
+/**
+ * 可变的边框着色器。
+ *
+ * editor 的 borderColor getter 与 rounded-frame 都持有同一个 `paint` 引用，
+ * 换色时只替换内部函数，不重建任何组件 —— 所以 `/dragon` 一敲完就生效，
+ * 输入框里的草稿也不会丢（也不需要 /reload）。
+ */
+class BorderColor {
+	private hexValue: string;
+	private mode: ColorMode;
+	private fn: ColorFn;
+	/** 稳定的引用，外部只拿它。 */
+	readonly paint: ColorFn;
+
+	constructor(hex: string, mode: ColorMode = "truecolor") {
+		this.hexValue = hex;
+		this.mode = mode;
+		this.fn = makeColorFn(hex, mode);
+		this.paint = (text: string) => this.fn(text);
+	}
+
+	get hex(): string {
+		return this.hexValue;
+	}
+
+	setHex(hex: string): void {
+		if (hex === this.hexValue) return;
+		this.hexValue = hex;
+		this.fn = makeColorFn(hex, this.mode);
+	}
+
+	/** 终端颜色能力要到 session_start 才知道，那时补一次。 */
+	setMode(mode: ColorMode): void {
+		if (mode === this.mode) return;
+		this.mode = mode;
+		this.fn = makeColorFn(this.hexValue, mode);
+	}
 }
 
 // ───────────────────────────── 编辑器 ─────────────────────────────
@@ -275,6 +327,73 @@ class FixedBorderEditor extends CustomEditor {
 // ───────────────────────────── 注册 ─────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+	// 当前配色：index.ts 的 BORDER_HEX 起步，被 /dragon 记住的选择覆盖。
+	const border = new BorderColor(readSavedHex() ?? BORDER_HEX);
+	// 留着给 /dragon 换色后主动重绘，不然要等下一次按键才看到新颜色。
+	let currentTui: TUI | undefined;
+
+	/** 应用配色：改内存 → 重绘 → 落盘。 */
+	const applyColor = (hex: string, label: string, ctx: ExtensionContext): void => {
+		border.setHex(hex);
+		currentTui?.requestRender(true);
+
+		const err = saveHex(hex);
+		ctx.ui.notify(
+			err
+				? `Border → ${label}, but saving the config failed: ${err}`
+				: `Border → ${label} (saved)`,
+			err ? "warning" : "info",
+		);
+	};
+
+	// ── /dragon：切换编辑器 / 弹框边框配色（可选，默认仍是 BORDER_HEX）──
+	pi.registerCommand("dragon", {
+		description: "Border color: goku / vegeta / piccolo",
+		getArgumentCompletions: (prefix) => {
+			const needle = prefix.trim().toLowerCase();
+			const items = PALETTES.map((p) => ({
+				value: p.key,
+				label: p.key,
+				description: p.en,
+			}));
+			const hit = items.filter((x) => x.value.startsWith(needle));
+			return hit.length > 0 ? hit : null;
+		},
+		handler: async (args, ctx) => {
+			const arg = args.trim().toLowerCase();
+
+			// 不带参数 → 弹选择菜单。
+			// 走 ctx.ui.custom() 而不是 ctx.ui.select()：内置 select 不经过 custom()，
+			// 套不上圆角框（见 picker.ts 顶部注释）。
+			if (arg.length === 0) {
+				// 当前配色用名字表示；万一配置里是手写的自定义 hex 才回退到 hex。
+				const current = PALETTES.find((p) => p.hex === border.hex);
+				const picked = await ctx.ui.custom<string | undefined>(
+					(_tui, theme, _keybindings, done) =>
+						new PalettePicker(
+							`Border color (current: ${current?.en ?? border.hex})`,
+							PALETTES.map((p) => ({ value: p.key, label: `${p.key} · ${p.en}` })),
+							theme,
+							done,
+						),
+				);
+				const target = PALETTES.find((p) => p.key === picked);
+				if (target) applyColor(target.hex, `${target.key} · ${target.en}`, ctx);
+				return;
+			}
+
+			// 只认三个主参数及其别名
+			const named = resolvePalette(arg);
+			if (!named) {
+				ctx.ui.notify(
+					`Unknown color "${arg}". Try: ${PALETTES.map((p) => p.key).join(" / ")}`,
+					"warning",
+				);
+				return;
+			}
+			applyColor(named.hex, `${named.key} · ${named.en}`, ctx);
+		},
+	});
 	// ── working 文案随机化（像 Claude Code 那样）──
 	let rotateTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -310,22 +429,24 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const mode = ctx.ui.theme.getColorMode() as ColorMode;
+		border.setMode(mode);
 
 		// 包装共享的 ctx.ui.custom，之后任何扩展的 custom 弹框都会被套上圆角框。
 		// /reload 会重建 uiContext，所以每次 session_start 都要重新装一遍（幂等）。
 		if (ROUNDED_ENABLED) {
-			// border 用和输入框边框同一个 BORDER_HEX，两者永远同色。
+			// border 用和输入框边框同一个色源，两者永远同色、且跟着 /dragon 变。
 			installRoundedCustom(ctx.ui, ctx.ui.theme, {
 				...ROUNDED_CONFIG,
-				border: makeColorFn(BORDER_HEX, mode),
+				border: border.paint,
 			});
 		}
 		ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+			currentTui = tui;
 			return new FixedBorderEditor(
 				tui,
 				theme,
 				keybindings,
-				makeColorFn(BORDER_HEX, mode),
+				border.paint,
 				mode,
 				EDITOR_ROUNDED,
 			);
