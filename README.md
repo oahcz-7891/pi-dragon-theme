@@ -1,10 +1,10 @@
 # pi-dragon-theme
 
-Dragon Ball / Namek-flavored pi extension. Three tweaks to the TUI:
+Dragon Ball / Namek-flavored pi extension. Three TUI tweaks:
 
-- **Fixed editor border** — locks the input box top/bottom border to one color (`#f0c674`), resisting pi's theme/thinking-level/bash-mode overwrites.
-- **Rounded modals** — wraps every extension `ctx.ui.custom()` dialog in a rounded frame sharing the same border color.
-- **Random working words** — replaces "Working" with a rotating Namekian word (`Purunga…`, `Takkaraputo…`).
+- **Editor box** — rounded frame (`EDITOR_ROUNDED`) whose border is locked to `#f0c674`, resisting theme / thinking-level / bash-mode overrides.
+- **Modals** — every extension `ctx.ui.custom()` dialog wrapped in the same rounded border.
+- **Working words** — "Working" replaced by a rotating Namekian word (`Purunga…`).
 
 ## Install
 
@@ -18,4 +18,4 @@ Restart pi. Later edits: `/reload`.
 
 ## Config
 
-Edit the constants at the top of `index.ts` (`BORDER_HEX`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, …).
+Edit the constants at the top of `index.ts` (`BORDER_HEX`, `EDITOR_ROUNDED`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, …).

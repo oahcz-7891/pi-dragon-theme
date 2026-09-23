@@ -17,6 +17,10 @@
  * 交给 WorkingStatusIndicator 同时给 spinner 和文案上色，
  * 因此 working 自动和边框同色。
  *
+ * 圆角输入框：
+ * 默认 pi 的 editor 只画上下两条横线；EDITOR_ROUNDED = true 时
+ * 在子类里把宽度减 2 交给基类渲染，再补上 │ 与 ╭╮╰╯，得到完整圆角盒子。
+ *
  * 安装方式（二选一）：
  *   1. package 方式：pi install /绝对路径/pi-dragon-theme（或 pi install git:github.com/xxx/pi-dragon-theme）
  *   2. 手拷方式：把 index.ts 与 rounded-frame.ts 一起放进 ~/.pi/agent/extensions/
@@ -28,7 +32,12 @@ import {
 	type ExtensionAPI,
 	type KeybindingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+import type {
+	EditorTheme,
+	TUI,
+	TuiMouseEvent,
+	TuiMouseEventResult,
+} from "@earendil-works/pi-tui";
 import { installRoundedCustom, type RoundedDialogsConfig } from "./rounded-frame.ts";
 
 // ─────────────────────────────── 配置 ───────────────────────────────
@@ -76,6 +85,16 @@ const WORKING_ROTATE_MS = 4000;
 
 /** 随机文案后面要不要加省略号，跟 Claude 一样那种。 */
 const WORKING_SUFFIX = "…";
+
+/**
+ * 输入框（editor）本身要不要圆角。true 时渲染成
+ *   ╭──────────────╮
+ *   │ > 输入内容    │
+ *   ╰──────────────╯
+ * 关掉就设 EDITOR_ROUNDED = false，恢复 pi 默认的上下两条横线。
+ * 只影响这个扩展自己的 editor，不影响内置 select / confirm / input 弹框。
+ */
+const EDITOR_ROUNDED = true;
 
 /**
  * 给所有扩展的 `ctx.ui.custom()` 弹框套圆角边框。
@@ -142,6 +161,7 @@ type WorkingIndicatorLike = {
 
 class FixedBorderEditor extends CustomEditor {
 	private readonly mode: ColorMode;
+	private readonly rounded: boolean;
 
 	constructor(
 		tui: TUI,
@@ -149,11 +169,13 @@ class FixedBorderEditor extends CustomEditor {
 		keybindings: KeybindingsManager,
 		colorFn: ColorFn,
 		mode: ColorMode,
+		rounded: boolean,
 	) {
 		// embedWorkingStatus: true → working 指示器渲染在顶边框内，
 		// 并用 borderColor 给 spinner 与文案上色（即与边框同色）。
 		super(tui, theme, keybindings, { embedWorkingStatus: true });
 		this.mode = mode;
+		this.rounded = rounded;
 
 		// pi 会在思考等级 / bash 模式 / 主题变化时覆写 borderColor，
 		// 用访问器把它锁死，外部赋值一律忽略。
@@ -163,6 +185,66 @@ class FixedBorderEditor extends CustomEditor {
 			configurable: true,
 			enumerable: true,
 		});
+	}
+
+	/**
+	 * 圆角输入框。基类只画上下两条横线（内容是内缩 padding 的整行），
+	 * 这里把宽度减 2 交给基类渲染，再给每一行左右补上 │，
+	 * 顶/底两行补上 ╭╮ / ╰╯，就得到一个完整的圆角盒子。
+	 *
+	 * 行数不变（顶边仍是第 0 行），所以硬光标定位、内联渲染的
+	 * 行数计算都不用改。
+	 */
+	override render(width: number): string[] {
+		const safeWidth = Math.floor(width);
+		// 太窄画不下左右边框，交回基类，免得把内容挤坏。
+		if (!this.rounded || safeWidth < 4) {
+			return super.render(width);
+		}
+
+		const lines = super.render(safeWidth - 2);
+		if (lines.length === 0) {
+			return lines;
+		}
+
+		// 基类 layout： [顶边框, ...可见内容行, 底边框, ...补全列表]
+		// renderedVisibleLineCount 是私有字段，这里按结构取用。
+		const visibleCount = (
+			this as unknown as { renderedVisibleLineCount?: number }
+		).renderedVisibleLineCount ?? Math.max(0, lines.length - 2);
+		const bottomIndex = Math.min(1 + visibleCount, lines.length - 1);
+
+		const corner = (ch: string) => this.borderColor(ch);
+		const out: string[] = [];
+
+		const top = lines[0]!;
+		out.push(corner("╭") + top + corner("╮"));
+
+		for (let i = 1; i < bottomIndex; i++) {
+			out.push(corner("│") + lines[i]! + corner("│"));
+		}
+
+		if (bottomIndex >= 1) {
+			out.push(corner("╰") + lines[bottomIndex]! + corner("╯"));
+		}
+
+		// 补全列表留在盒子下方，但整体右移 1 格，跟输入文字对齐。
+		for (let i = bottomIndex + 1; i < lines.length; i++) {
+			out.push(" " + lines[i]!);
+		}
+
+		return out;
+	}
+
+	/**
+	 * 圆角后内容整体右移 1 列（左 │），基类的鼠标命中测试要跟着平移，
+	 * 否则点击定位会差一格。行坐标不变。
+	 */
+	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (!this.rounded || event.width < 4) {
+			return super.handleMouse(event);
+		}
+		return super.handleMouse({ ...event, x: event.x - 1, width: event.width - 2 });
 	}
 
 	/**
@@ -245,6 +327,7 @@ export default function (pi: ExtensionAPI) {
 				keybindings,
 				makeColorFn(BORDER_HEX, mode),
 				mode,
+				EDITOR_ROUNDED,
 			);
 		});
 	});
