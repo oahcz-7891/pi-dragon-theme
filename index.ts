@@ -111,18 +111,18 @@ const WORKING_SUFFIX = "…";
 const EDITOR_ROUNDED = true;
 
 /**
- * 输入框行首提示符。非空时第一行内容前加 `glyph + 空格`，
- * 续行用 PROMPT_PAD 缩进对齐。想换成别的（❯ › ▸）改这个字符串即可；
- * 留空字符串就完全关掉提示符。
+ * 输入框行首提示符。`PROMPT_GLYPH` 为非空时，第一行内容前画 `PROMPT_LEAD + glyph + 空格`；
+ * 续行缩进按提示符的实际宽度自动生成，所以换行后上下两行文字始终对齐。
+ * 想换成别的（❯ › ▸）改 PROMPT_GLYPH；留空字符串就完全关掉提示符。
  * 颜色跟随边框（BORDER_HEX / `/dragon`），不单独配。
  */
-const PROMPT_GLYPH = " >";
+const PROMPT_LEAD = " ";
+const PROMPT_GLYPH = ">";
 
-/**
- * 续行缩进。宽度要和 `PROMPT_GLYPH + 一个空格` 一致（默认 2 列），
- * 否则圆角框右侧的 │ 会对不齐。
- */
-const PROMPT_PAD = "  ";
+/** 提示符占的列数：前置空格 + 字形 + 尾随空格。留空字形时为 0。 */
+function promptWidth(): number {
+	return PROMPT_GLYPH ? visibleWidth(PROMPT_LEAD) + visibleWidth(PROMPT_GLYPH) + 1 : 0;
+}
 
 /**
  * 给所有扩展的 `ctx.ui.custom()` 弹框套圆角边框。
@@ -264,19 +264,18 @@ class FixedBorderEditor extends CustomEditor {
 	 */
 	override render(width: number): string[] {
 		const safeWidth = Math.floor(width);
-		// 提示符占的列数：字形本身 + 一个空格。
-		const promptWidth = PROMPT_GLYPH ? visibleWidth(PROMPT_GLYPH) + 1 : 0;
+		const pw = promptWidth();
 		// 太窄画不下左右边框就退回基类；但这样内容仍会被缩窄，只是不补 │。
-		const framed = this.rounded && safeWidth >= 4 + promptWidth;
+		const framed = this.rounded && safeWidth >= 4 + pw;
 
 		// 既不加提示符也不描边 → 完全保持基类行为。
-		if (!framed && promptWidth === 0) {
+		if (!framed && pw === 0) {
 			return super.render(width);
 		}
 
 		// 提示符和左右 │ 都算在总宽里，交给基类的宽度要相应减少，
-		// 否则文字换行宽度会比实际可用空间多 2 列。
-		const inner = safeWidth - promptWidth - (framed ? 2 : 0);
+		// 否则文字换行宽度会比实际可用空间多几列。
+		const inner = safeWidth - pw - (framed ? 2 : 0);
 		if (inner < 1) {
 			return super.render(width);
 		}
@@ -297,7 +296,7 @@ class FixedBorderEditor extends CustomEditor {
 		const out: string[] = [];
 
 		// 提示符占掉的列，用 ─ 补在横边框后面，保持框宽一致。
-		const borderPad = promptWidth > 0 ? "─".repeat(promptWidth) : "";
+		const borderPad = pw > 0 ? "─".repeat(pw) : "";
 		const left = framed ? corner("│") : "";
 		const right = framed ? corner("│") : "";
 
@@ -306,11 +305,11 @@ class FixedBorderEditor extends CustomEditor {
 		);
 
 		for (let i = 1; i < bottomIndex; i++) {
-			// 第一行画 `> `，续行用等宽空格缩进，文字整体对齐。
+			// 第一行画 ` > `，续行用同宽空格缩进，换行后文字左边对齐。
 			const prefix = PROMPT_GLYPH
 				? i === 1
-					? this.borderColor(PROMPT_GLYPH) + " "
-					: PROMPT_PAD
+					? PROMPT_LEAD + this.borderColor(PROMPT_GLYPH) + " "
+					: " ".repeat(pw)
 				: "";
 			out.push(left + prefix + lines[i]! + right);
 		}
@@ -325,7 +324,7 @@ class FixedBorderEditor extends CustomEditor {
 		}
 
 		// 补全列表留在盒子下方，但整体右移，跟输入文字对齐。
-		const listIndent = " ".repeat(promptWidth + (framed ? 1 : 0));
+		const listIndent = " ".repeat(pw + (framed ? 1 : 0));
 		for (let i = bottomIndex + 1; i < lines.length; i++) {
 			out.push(listIndent + lines[i]!);
 		}
@@ -338,16 +337,16 @@ class FixedBorderEditor extends CustomEditor {
 	 * 否则点击定位会差几格。行坐标不变。
 	 */
 	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		const promptWidth = PROMPT_GLYPH ? visibleWidth(PROMPT_GLYPH) + 1 : 0;
-		const framed = this.rounded && event.width >= 4 + promptWidth;
-		const shift = promptWidth + (framed ? 1 : 0);
+		const pw = promptWidth();
+		const framed = this.rounded && event.width >= 4 + pw;
+		const shift = pw + (framed ? 1 : 0);
 		if (shift === 0) {
 			return super.handleMouse(event);
 		}
 		return super.handleMouse({
 			...event,
 			x: event.x - shift,
-			width: event.width - promptWidth - (framed ? 2 : 0),
+			width: event.width - pw - (framed ? 2 : 0),
 		});
 	}
 

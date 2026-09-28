@@ -17,18 +17,11 @@ pi install git:github.com/oahcz-7891/pi-dragon-theme
 
 Restart pi. Later edits: `/reload`.
 
-```
-╭──────────────────────────────────╮
-│ > 把这些常量改一下                │
-│   第二行自动对齐                  │
-╰──────────────────────────────────╯
-```
-
 ## Config
 
-Edit the constants at the top of `index.ts` (`BORDER_HEX`, `PROMPT_GLYPH`, `PROMPT_PAD`, `EDITOR_ROUNDED`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, …).
+Edit the constants at the top of `index.ts` (`BORDER_HEX`, `PROMPT_LEAD`, `PROMPT_GLYPH`, `EDITOR_ROUNDED`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, …).
 
-`PROMPT_GLYPH` is the editor's line-start prompt (`">"` by default); set it to `""` to turn the prompt off, or to another glyph (`❯`, `›`, `▸`). `PROMPT_PAD` is the continuation-line indent and must stay as wide as `PROMPT_GLYPH` plus one space. The prompt is colored with the border color, so `/dragon` recolors it too.
+`PROMPT_LEAD` is the default space before the editor's line-start prompt, and `PROMPT_GLYPH` is the glyph itself (`">"`). Set `PROMPT_GLYPH` to `""` to turn the prompt off, or to another glyph (`❯`, `›`, `▸`). The continuation indent is computed from the prompt's real width, so wrapped lines stay aligned automatically. The prompt is colored with the border color, so `/dragon` recolors it too.
 
 ## Colors · `/dragon`
 
@@ -41,7 +34,7 @@ The border color defaults to `BORDER_HEX` in `index.ts` (`#f0c674`, Goku gold). 
 /dragon piccolo        # Piccolo green  #7fc95a
 ```
 
-The command surface (list description, Tab completions, picker, notifications) is in English. Color words and Chinese names still work as aliases: `gold` / `blue` / `green`, `悟空` / `贝吉塔` / `短笛`.
+The command surface (list description, Tab completions, picker, notifications) is in English. Color words and Chinese names still work as aliases: `gold` / `blue` / `green`.
 
 The picker is built with `ctx.ui.custom()` (see `picker.ts`) rather than `ctx.ui.select()`, so it gets the same rounded frame as everything else — pi's built-in `select` / `confirm` / `input` / `editor` dialogs bypass `custom()` and cannot be framed. Keyboard navigation reuses pi-tui's `SelectList`.
 The choice is saved to `<agent dir>/.dragon-theme.json` (`~/.pi/agent/` by default, override with `$PI_CODING_AGENT_DIR` or `$PI_DRAGON_THEME_CONFIG`) and survives restarts.
