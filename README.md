@@ -2,7 +2,7 @@
 
 Dragon Ball / Namek-flavored pi extension. Three TUI tweaks:
 
-- **Editor box** — rounded frame (`EDITOR_ROUNDED`) whose border is locked to `#f0c674`, resisting theme / thinking-level / bash-mode overrides.
+- **Editor box** — rounded frame (`EDITOR_ROUNDED`) whose border is locked to `#f0c674`, resisting theme / thinking-level / bash-mode overrides. A golden `>` prompt (`PROMPT_GLYPH`) is drawn at the start of the input line, continuation lines indented to match.
 - **Modals** — every extension `ctx.ui.custom()` dialog wrapped in the same rounded border.
 - **Working words** — "Working" replaced by a rotating Namekian word (`Purunga…`).
 - **`/dragon`** — optional command to switch the border color at runtime.
@@ -17,9 +17,18 @@ pi install git:github.com/oahcz-7891/pi-dragon-theme
 
 Restart pi. Later edits: `/reload`.
 
+```
+╭──────────────────────────────────╮
+│ > 把这些常量改一下                │
+│   第二行自动对齐                  │
+╰──────────────────────────────────╯
+```
+
 ## Config
 
-Edit the constants at the top of `index.ts` (`BORDER_HEX`, `EDITOR_ROUNDED`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, …).
+Edit the constants at the top of `index.ts` (`BORDER_HEX`, `PROMPT_GLYPH`, `PROMPT_PAD`, `EDITOR_ROUNDED`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, …).
+
+`PROMPT_GLYPH` is the editor's line-start prompt (`">"` by default); set it to `""` to turn the prompt off, or to another glyph (`❯`, `›`, `▸`). `PROMPT_PAD` is the continuation-line indent and must stay as wide as `PROMPT_GLYPH` plus one space. The prompt is colored with the border color, so `/dragon` recolors it too.
 
 ## Colors · `/dragon`
 

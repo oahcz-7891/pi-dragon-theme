@@ -33,6 +33,7 @@ import {
 	type ExtensionContext,
 	type KeybindingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import type {
 	EditorTheme,
 	TUI,
@@ -108,6 +109,20 @@ const WORKING_SUFFIX = "…";
  * 只影响这个扩展自己的 editor，不影响内置 select / confirm / input 弹框。
  */
 const EDITOR_ROUNDED = true;
+
+/**
+ * 输入框行首提示符。非空时第一行内容前加 `glyph + 空格`，
+ * 续行用 PROMPT_PAD 缩进对齐。想换成别的（❯ › ▸）改这个字符串即可；
+ * 留空字符串就完全关掉提示符。
+ * 颜色跟随边框（BORDER_HEX / `/dragon`），不单独配。
+ */
+const PROMPT_GLYPH = " >";
+
+/**
+ * 续行缩进。宽度要和 `PROMPT_GLYPH + 一个空格` 一致（默认 2 列），
+ * 否则圆角框右侧的 │ 会对不齐。
+ */
+const PROMPT_PAD = "  ";
 
 /**
  * 给所有扩展的 `ctx.ui.custom()` 弹框套圆角边框。
@@ -249,12 +264,24 @@ class FixedBorderEditor extends CustomEditor {
 	 */
 	override render(width: number): string[] {
 		const safeWidth = Math.floor(width);
-		// 太窄画不下左右边框，交回基类，免得把内容挤坏。
-		if (!this.rounded || safeWidth < 4) {
+		// 提示符占的列数：字形本身 + 一个空格。
+		const promptWidth = PROMPT_GLYPH ? visibleWidth(PROMPT_GLYPH) + 1 : 0;
+		// 太窄画不下左右边框就退回基类；但这样内容仍会被缩窄，只是不补 │。
+		const framed = this.rounded && safeWidth >= 4 + promptWidth;
+
+		// 既不加提示符也不描边 → 完全保持基类行为。
+		if (!framed && promptWidth === 0) {
 			return super.render(width);
 		}
 
-		const lines = super.render(safeWidth - 2);
+		// 提示符和左右 │ 都算在总宽里，交给基类的宽度要相应减少，
+		// 否则文字换行宽度会比实际可用空间多 2 列。
+		const inner = safeWidth - promptWidth - (framed ? 2 : 0);
+		if (inner < 1) {
+			return super.render(width);
+		}
+
+		const lines = super.render(inner);
 		if (lines.length === 0) {
 			return lines;
 		}
@@ -269,34 +296,59 @@ class FixedBorderEditor extends CustomEditor {
 		const corner = (ch: string) => this.borderColor(ch);
 		const out: string[] = [];
 
-		const top = lines[0]!;
-		out.push(corner("╭") + top + corner("╮"));
+		// 提示符占掉的列，用 ─ 补在横边框后面，保持框宽一致。
+		const borderPad = promptWidth > 0 ? "─".repeat(promptWidth) : "";
+		const left = framed ? corner("│") : "";
+		const right = framed ? corner("│") : "";
+
+		out.push(
+			(framed ? corner("╭") : "") + lines[0]! + borderPad + (framed ? corner("╮") : ""),
+		);
 
 		for (let i = 1; i < bottomIndex; i++) {
-			out.push(corner("│") + lines[i]! + corner("│"));
+			// 第一行画 `> `，续行用等宽空格缩进，文字整体对齐。
+			const prefix = PROMPT_GLYPH
+				? i === 1
+					? this.borderColor(PROMPT_GLYPH) + " "
+					: PROMPT_PAD
+				: "";
+			out.push(left + prefix + lines[i]! + right);
 		}
 
 		if (bottomIndex >= 1) {
-			out.push(corner("╰") + lines[bottomIndex]! + corner("╯"));
+			out.push(
+				(framed ? corner("╰") : "") +
+					lines[bottomIndex]! +
+					borderPad +
+					(framed ? corner("╯") : ""),
+			);
 		}
 
-		// 补全列表留在盒子下方，但整体右移 1 格，跟输入文字对齐。
+		// 补全列表留在盒子下方，但整体右移，跟输入文字对齐。
+		const listIndent = " ".repeat(promptWidth + (framed ? 1 : 0));
 		for (let i = bottomIndex + 1; i < lines.length; i++) {
-			out.push(" " + lines[i]!);
+			out.push(listIndent + lines[i]!);
 		}
 
 		return out;
 	}
 
 	/**
-	 * 圆角后内容整体右移 1 列（左 │），基类的鼠标命中测试要跟着平移，
-	 * 否则点击定位会差一格。行坐标不变。
+	 * 圆角后内容整体右移（左 │ + 提示符），基类的鼠标命中测试要跟着平移，
+	 * 否则点击定位会差几格。行坐标不变。
 	 */
 	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (!this.rounded || event.width < 4) {
+		const promptWidth = PROMPT_GLYPH ? visibleWidth(PROMPT_GLYPH) + 1 : 0;
+		const framed = this.rounded && event.width >= 4 + promptWidth;
+		const shift = promptWidth + (framed ? 1 : 0);
+		if (shift === 0) {
 			return super.handleMouse(event);
 		}
-		return super.handleMouse({ ...event, x: event.x - 1, width: event.width - 2 });
+		return super.handleMouse({
+			...event,
+			x: event.x - shift,
+			width: event.width - promptWidth - (framed ? 2 : 0),
+		});
 	}
 
 	/**
