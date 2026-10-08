@@ -1,11 +1,14 @@
 # pi-dragon-theme
 
-Dragon Ball / Namek-flavored pi extension. Three TUI tweaks:
+Dragon Ball / Namek-flavored pi extension: rounded editor frame, framed modals, Namekian working spinner, and a tok/s stat.
 
-- **Editor box** — rounded frame (`EDITOR_ROUNDED`) whose border is locked to `#f0c674`, resisting theme / thinking-level / bash-mode overrides. A golden `>` prompt (`PROMPT_GLYPH`) is drawn at the start of the input line, continuation lines indented to match.
-- **Modals** — every extension `ctx.ui.custom()` dialog wrapped in the same rounded border.
+## Features
+
+- **Editor box** — rounded frame (`EDITOR_ROUNDED`) with a border locked to `#f0c674` (ignores theme / thinking-level / bash-mode overrides) and a golden `>` prompt (`PROMPT_GLYPH`) at the start of the input line; wrapped lines are indented to match.
+- **Modals** — every `ctx.ui.custom()` dialog gets the same rounded border. pi's own full-width `DynamicBorder` rules are stripped (`stripInnerRules`, on by default; set it `false` in `ROUNDED_CONFIG` to keep pi's look), including key-hint footers below the bottom rule (e.g. ask-user-question).
 - **Working words** — "Working" replaced by a rotating Namekian word (`Purunga…`).
-- **`/dragon`** — optional command to switch the border color at runtime.
+- **TPS** — `⚡ 48.2 tok/s` in the footer status area, dim like the native stats. Updates while streaming, keeps the last value until the next turn.
+- **`/dragon`** — optional runtime border-color switch.
 
 ## Install
 
@@ -19,13 +22,14 @@ Restart pi. Later edits: `/reload`.
 
 ## Config
 
-Edit the constants at the top of `index.ts` (`BORDER_HEX`, `PROMPT_LEAD`, `PROMPT_GLYPH`, `EDITOR_ROUNDED`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, …).
+Constants at the top of `index.ts`: `BORDER_HEX`, `PROMPT_LEAD`, `PROMPT_GLYPH`, `EDITOR_ROUNDED`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, `TPS_*`, …
 
-`PROMPT_LEAD` is the default space before the editor's line-start prompt, and `PROMPT_GLYPH` is the glyph itself (`">"`). Set `PROMPT_GLYPH` to `""` to turn the prompt off, or to another glyph (`❯`, `›`, `▸`). The continuation indent is computed from the prompt's real width, so wrapped lines stay aligned automatically. The prompt is colored with the border color, so `/dragon` recolors it too.
+- **Prompt** — `PROMPT_LEAD` is the space before the prompt, `PROMPT_GLYPH` the glyph (`">"`; `""` disables, or use `❯` / `›` / `▸`). Indent width follows the real glyph width, and the prompt uses the border color so `/dragon` recolors it.
+- **TPS** — uses `usage.output` (thinking tokens included) and starts at the first streamed token, so it measures pure generation speed. `TPS_PREFIX` / `TPS_SUFFIX` (`⚡ ` / ` tok/s`), `TPS_REFRESH_MS` throttles redraws, `TPS_ENABLED = false` disables it. Drawn via `ctx.ui.setStatus()` on the extension-status line, leaving the native `↑↓R W $ %` line untouched.
 
 ## Colors · `/dragon`
 
-The border color defaults to `BORDER_HEX` in `index.ts` (`#f0c674`, Goku gold). Switching it is **optional** — use the `/dragon` command instead of editing the file:
+Defaults to `BORDER_HEX` (`#f0c674`, Goku gold). Switching is optional — prefer the command over editing the file:
 
 ```
 /dragon                # picker menu (shows the current color)
@@ -34,9 +38,6 @@ The border color defaults to `BORDER_HEX` in `index.ts` (`#f0c674`, Goku gold). 
 /dragon piccolo        # Piccolo green  #7fc95a
 ```
 
-The command surface (list description, Tab completions, picker, notifications) is in English. Color words and Chinese names still work as aliases: `gold` / `blue` / `green`.
+Surface text is English; `gold` / `blue` / `green` also work as aliases. The picker uses `ctx.ui.custom()` (`picker.ts`) so it gets the rounded frame too — built-in `select` / `confirm` / `input` / `editor` dialogs bypass `custom()` and cannot be framed. The choice is saved to `<agent dir>/.dragon-theme.json` (`~/.pi/agent/`, overridable via `$PI_CODING_AGENT_DIR` or `$PI_DRAGON_THEME_CONFIG`) and survives restarts.
 
-The picker is built with `ctx.ui.custom()` (see `picker.ts`) rather than `ctx.ui.select()`, so it gets the same rounded frame as everything else — pi's built-in `select` / `confirm` / `input` / `editor` dialogs bypass `custom()` and cannot be framed. Keyboard navigation reuses pi-tui's `SelectList`.
-The choice is saved to `<agent dir>/.dragon-theme.json` (`~/.pi/agent/` by default, override with `$PI_CODING_AGENT_DIR` or `$PI_DRAGON_THEME_CONFIG`) and survives restarts.
-
-The editor border, the rounded wrapper around `ctx.ui.custom()` dialogs, the working spinner, and the thinking / bash-mode border all read the same mutable color source, so a switch applies on the next frame — no `/reload` needed, and any draft text in the editor is kept.
+Editor border, modal wrapper, spinner, and thinking / bash-mode border all read the same mutable color source, so a switch applies on the next frame — no `/reload`, and draft text is kept.

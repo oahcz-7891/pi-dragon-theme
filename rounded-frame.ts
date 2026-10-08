@@ -38,6 +38,53 @@ export interface RoundedDialogsConfig {
 	paddingY: number;
 	/** 只给 overlay 浮层套框；true 时非浮层的 custom UI 保持原样。 */
 	overlayOnly: boolean;
+	/**
+	 * pi 的弹窗组件习惯画一条 DynamicBorder（一整行 `─`）当顶部装饰、
+	 * 再在底部画一条，套上圆角框就会变成「框里还有两条横线」。
+	 * true（默认）时砍掉顶部第一行与底部的装饰横线；想保留原生观感就设 false。
+	 * 底部不是只看最后一行 —— 有些弹窗（ask-user-question）把 footer
+	 * 放在底边框后面，需要往尾部回扫，见 stripEdgeRules()。
+	 */
+	stripInnerRules?: boolean;
+}
+
+/** 去掉 ANSI 转义后是否只剩横线字符（pi 的 DynamicBorder 就是整行 `─`）。 */
+function isRuleLine(line: string): boolean {
+	const plain = line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").trim();
+	return plain.length > 0 && /^[─━═]+$/.test(plain);
+}
+
+/**
+ * 砍掉内层组件自带的上下装饰横线。
+ *
+ * - 顶部：只认渲染结果的第一行。
+ * - 底部：不能只看最后一行。pi 自带的 select / input / editor 弹窗把
+ *   DynamicBorder 放在最后一行，但 ask-user-question 那类是
+ *   `[..., 底部 border, Spacer(1), 提示行]`（见其 dialog-builder.ts:266-267），
+ *   而且弹窗还会用空行把高度补齐。所以从末尾往前扫：空行无限跳过
+ *   （那只是补高），非空行最多跳过 footerLookahead 行（footer 提示），
+ *   碰到第一条纯横线就删；超过预算就放弃，不当成装饰线。
+ *
+ * 如果整块内容都是横线（例如组件本身就是个分隔条），原样返回，
+ * 免得渲染出一个只有空壳的盒子。
+ */
+function stripEdgeRules(lines: readonly string[], footerLookahead = 4): readonly string[] {
+	if (lines.length === 0) return lines;
+	const out = lines.slice();
+
+	if (isRuleLine(out[0]!)) out.shift();
+
+	let footerRows = 0;
+	for (let i = out.length - 1; i >= 0; i--) {
+		const line = out[i]!;
+		if (isRuleLine(line)) {
+			out.splice(i, 1);
+			break;
+		}
+		if (line.trim() !== "" && ++footerRows > footerLookahead) break;
+	}
+
+	return out.length > 0 ? out : lines;
 }
 
 interface DisposableComponent extends Component {
@@ -53,13 +100,18 @@ export class RoundedFrame implements Component, Focusable {
 	private readonly border: ColorFn;
 	private readonly paddingX: number;
 	private readonly paddingY: number;
+	private readonly stripInnerRules: boolean;
 	private _focused = false;
 
-	constructor(inner: DisposableComponent, options: { border: ColorFn; paddingX: number; paddingY: number }) {
+	constructor(
+		inner: DisposableComponent,
+		options: { border: ColorFn; paddingX: number; paddingY: number; stripInnerRules?: boolean },
+	) {
 		this.inner = inner;
 		this.border = options.border;
 		this.paddingX = Math.max(0, options.paddingX);
 		this.paddingY = Math.max(0, options.paddingY);
+		this.stripInnerRules = options.stripInnerRules ?? true;
 	}
 
 	get focused(): boolean {
@@ -118,7 +170,9 @@ export class RoundedFrame implements Component, Focusable {
 		const lines: string[] = [top];
 		for (let i = 0; i < this.paddingY; i++) lines.push(blank);
 
-		for (const raw of this.inner.render(contentWidth)) {
+		const rendered = this.inner.render(contentWidth);
+		// 内层自带的上下横线（DynamicBorder）在这里各砍一行，只留圆角框一条边。
+		for (const raw of this.stripInnerRules ? stripEdgeRules(rendered) : rendered) {
 			// 只在超宽时才截断，避免误伤 CURSOR_MARKER 等零宽序列。
 			const clipped = visibleWidth(raw) > contentWidth ? truncateToWidth(raw, contentWidth, "") : raw;
 			const fill = " ".repeat(Math.max(0, contentWidth - visibleWidth(clipped)));
@@ -168,6 +222,7 @@ export function installRoundedCustom(
 					border: config.border ?? ((text) => t.fg(config.borderColor, text)),
 					paddingX: config.paddingX,
 					paddingY: config.paddingY,
+					stripInnerRules: config.stripInnerRules,
 				});
 
 			const result = (factory as (...a: unknown[]) => unknown)(tui, currentTheme, keybindings, done);

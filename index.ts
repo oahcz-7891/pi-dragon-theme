@@ -101,6 +101,29 @@ const WORKING_ROTATE_MS = 4000;
 const WORKING_SUFFIX = "…";
 
 /**
+ * 底部状态栏的生成速度统计（TPS，tokens/s）。
+ *
+ * 口径：用 usage.output（已含 reasoning / thinking token）。
+ * 从第一个 token 到达才开始计时，所以不含首字延迟（TTFT），是纯生成速度。
+ * 生成过程中实时刷新，一条 assistant 消息结束后保留最终值，
+ * 直到下一轮 turn_start 才清空。不想要就设 TPS_ENABLED = false。
+ *
+ * 显示成原生风格的一行深灰文字：`⚡ 48.2 tok/s`（颜色用主题的 dim，
+ * 和 footer 里的 ↑↓R W 统计同款）。它走 ctx.ui.setStatus()，
+ * 占状态栏扩展状态那一行，不会改动原生 footer。
+ */
+const TPS_ENABLED = true;
+/** 数字前后的文案；TPS_PREFIX 留空就只有数字。 */
+const TPS_PREFIX = "⚡ ";
+const TPS_SUFFIX = " tok/s";
+/** 实时刷新节流（毫秒）：delta 来得太密，没必要每个 token 都重绘一次。 */
+const TPS_REFRESH_MS = 250;
+/** 小于这个秒数不报数值，避开刚开头几毫秒的采样抖动。 */
+const TPS_MIN_SECONDS = 0.25;
+/** ctx.ui.setStatus 用的 key，同 key 覆盖、传 undefined 清空。 */
+const TPS_KEY = "dragon-tps";
+
+/**
  * 输入框（editor）本身要不要圆角。true 时渲染成
  *   ╭──────────────╮
  *   │ > 输入内容    │
@@ -135,6 +158,10 @@ const ROUNDED_CONFIG: RoundedDialogsConfig = {
 	paddingX: 1,
 	paddingY: 0,
 	overlayOnly: false,
+	// pi 的弹窗组件常在顶部/底部各画一条 DynamicBorder（整行 ─），
+	// 跟圆角框叠在一起就是"框里还有两条横线"。true = 砍掉它们，设 false 保留原生。
+	// 顶部看第一行；底部会向尾部回扫几行，因为有的弹窗把快捷键提示放在底边框下面。
+	stripInnerRules: true,
 };
 
 // ─────────────────────────────── 着色 ───────────────────────────────
@@ -214,6 +241,37 @@ class BorderColor {
 		this.mode = mode;
 		this.fn = makeColorFn(this.hexValue, mode);
 	}
+}
+
+// ───────────────────────────── TPS 统计 ─────────────────────────────
+
+/** 只取用到的字段，避免依赖未导出的内部类型。 */
+type AssistantMessageLike = {
+	role?: string;
+	usage?: { output?: number };
+	content?: ReadonlyArray<{ type?: string; text?: string; thinking?: string }>;
+};
+
+/** 生成速度保留一位小数；上到三位数（100+）就取整，省得数字乱跳。 */
+function formatTps(value: number): string {
+	if (!Number.isFinite(value) || value <= 0) return "0.0";
+	return value >= 100 ? String(Math.round(value)) : value.toFixed(1);
+}
+
+/**
+ * 一条 assistant 消息目前已产出的 token 数。
+ * 优先用运行商上报的 usage.output；有的 provider 只在结束时才给，
+ * 流式途中就按正文 + 思考的字符数粗估（÷4），让 TPS 能实时动起来。
+ */
+function countOutputTokens(message: AssistantMessageLike): number {
+	const reported = message.usage?.output ?? 0;
+	if (reported > 0) return reported;
+	let chars = 0;
+	for (const block of message.content ?? []) {
+		if (block.type === "text") chars += block.text?.length ?? 0;
+		else if (block.type === "thinking") chars += block.thinking?.length ?? 0;
+	}
+	return Math.round(chars / 4);
 }
 
 // ───────────────────────────── 编辑器 ─────────────────────────────
@@ -474,10 +532,68 @@ export default function (pi: ExtensionAPI) {
 	// 一轮结束就停掉轮换，省得空闲时还在空转。
 	pi.on("agent_end", () => stopRotating());
 
+	// ── TPS：底部状态栏的生成速度统计（实时 + 保留末值）──
+	// 走 ctx.ui.setStatus()，占扩展状态那一行；原生 footer 的 ↑↓ 统计行不动。
+	let tpsStartMs: number | undefined;
+	let tpsLastRenderMs = 0;
+
+	const writeTps = (ctx: ExtensionContext, value: number | undefined): void => {
+		ctx.ui.setStatus(
+			TPS_KEY,
+			value === undefined
+				? undefined
+				: ctx.ui.theme.fg("dim", `${TPS_PREFIX}${formatTps(value)}${TPS_SUFFIX}`),
+		);
+	};
+
+	// 新一轮开始先清空，等第一个 token 到了再重新计时。
+	pi.on("turn_start", (_event, ctx) => {
+		if (!TPS_ENABLED) return;
+		tpsStartMs = undefined;
+		tpsLastRenderMs = 0;
+		writeTps(ctx, undefined);
+	});
+
+	pi.on("message_update", (event, ctx) => {
+		if (!TPS_ENABLED) return;
+		const ev = event.assistantMessageEvent;
+		if (ev.type !== "text_delta" && ev.type !== "thinking_delta" && ev.type !== "toolcall_delta") {
+			return;
+		}
+
+		const now = Date.now();
+		// 第一个 delta 只记起点（TTFT 不计入），之后按节流刷新。
+		if (tpsStartMs === undefined) tpsStartMs = now;
+		if (now - tpsLastRenderMs < TPS_REFRESH_MS) return;
+
+		const tokens = countOutputTokens(ev.partial as unknown as AssistantMessageLike);
+		const seconds = (now - tpsStartMs) / 1000;
+		if (tokens <= 0 || seconds < TPS_MIN_SECONDS) return;
+
+		tpsLastRenderMs = now;
+		writeTps(ctx, tokens / seconds);
+	});
+
+	// 一条 assistant 消息结束：用最终 usage 算出准数值，并保留下来。
+	pi.on("message_end", (event, ctx) => {
+		if (!TPS_ENABLED) return;
+		const message = event.message as unknown as AssistantMessageLike;
+		if (message.role !== "assistant" || tpsStartMs === undefined) return;
+
+		const seconds = (Date.now() - tpsStartMs) / 1000;
+		const tokens = countOutputTokens(message);
+		tpsStartMs = undefined;
+		if (tokens <= 0 || seconds <= 0) return;
+		writeTps(ctx, tokens / seconds);
+	});
+
 	pi.on("session_start", (_event, ctx) => {
 		if (WORKING_WORDS.length === 0 && WORKING_TEXT) {
 			ctx.ui.setWorkingMessage(WORKING_TEXT);
 		}
+
+		// 新会话/切会话：清掉上一条会话遗留的 TPS。
+		if (TPS_ENABLED) writeTps(ctx, undefined);
 
 		const mode = ctx.ui.theme.getColorMode() as ColorMode;
 		border.setMode(mode);
