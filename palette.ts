@@ -87,27 +87,50 @@ export function configPath(): string {
 	return join(agentDir, ".dragon-theme.json");
 }
 
-/** 读取记住的 hex；文件不存在、JSON 坏了、值不合法，一律当没设置。 */
-export function readSavedHex(): string | undefined {
+/** 读取整个配置文件；文件不存在 / JSON 坏了 → 空对象。 */
+function readConfig(): Record<string, unknown> {
 	try {
-		const parsed = JSON.parse(readFileSync(configPath(), "utf8")) as {
-			borderHex?: unknown;
-		};
-		const hex = parsed?.borderHex;
-		return typeof hex === "string" && isValidHex(hex) ? hex.toLowerCase() : undefined;
+		const parsed = JSON.parse(readFileSync(configPath(), "utf8")) as unknown;
+		return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
 	} catch {
-		return undefined;
+		return {};
 	}
 }
 
-/** 写入记住的 hex。成功返回 undefined，失败返回错误信息（不抛，免得把命令打断）。 */
-export function saveHex(hex: string): string | undefined {
+/**
+ * 合并写入配置文件（保留其它字段，比如 borderHex）。
+ * 成功返回 undefined，失败返回错误信息（不抛，免得把命令打断）。
+ */
+function writeConfig(patch: Record<string, unknown>): string | undefined {
 	try {
 		const target = configPath();
 		mkdirSync(dirname(target), { recursive: true });
-		writeFileSync(target, `${JSON.stringify({ borderHex: hex }, null, 2)}\n`, "utf8");
+		const merged = { ...readConfig(), ...patch };
+		writeFileSync(target, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 		return undefined;
 	} catch (error) {
 		return error instanceof Error ? error.message : String(error);
 	}
+}
+
+/** 读取记住的 hex；文件不存在、JSON 坏了、值不合法，一律当没设置。 */
+export function readSavedHex(): string | undefined {
+	const hex = readConfig().borderHex;
+	return typeof hex === "string" && isValidHex(hex) ? hex.toLowerCase() : undefined;
+}
+
+/** 写入记住的 hex。 */
+export function saveHex(hex: string): string | undefined {
+	return writeConfig({ borderHex: hex });
+}
+
+/** 读取记住的「收起思考实时行」开关；没存过 → undefined（用 index.ts 的常量默认）。 */
+export function readSavedCollapsedThinking(): boolean | undefined {
+	const value = readConfig().collapsedThinking;
+	return typeof value === "boolean" ? value : undefined;
+}
+
+/** 写入「收起思考实时行」开关。 */
+export function saveCollapsedThinking(enabled: boolean): string | undefined {
+	return writeConfig({ collapsedThinking: enabled });
 }
