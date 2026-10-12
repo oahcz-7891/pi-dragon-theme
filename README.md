@@ -8,7 +8,7 @@ Dragon Ball / Namek-flavored pi extension: rounded editor frame, framed modals, 
 - **Modals** — every `ctx.ui.custom()` dialog gets the same rounded border. pi's own full-width `DynamicBorder` rules are stripped (`stripInnerRules`, on by default; set it `false` in `ROUNDED_CONFIG` to keep pi's look), including key-hint footers below the bottom rule (e.g. ask-user-question).
 - **Working words** — "Working" replaced by a rotating Namekian word (`Purunga…`).
 - **Collapsed thinking** — with thinking hidden (`ctrl+T`), pi's `Thinking...` header is kept and a second line goes live under it: while the model thinks it shows the **latest line of the reasoning** (tail-truncated, so the newest words stay visible), and once the block finishes it appends a dim `… (ctrl+t 展开)` hint. Only collapsed blocks change; expanded thinking and the click-to-peek on a single block are untouched. Toggle with `/dragon thinking` (persisted), or set `THINKING_COLLAPSED_ENABLED = false` for a new default.
-- **TPS** — `⚡ 48.2 tok/s` in the footer status area, dim like the native stats. Updates while streaming, keeps the last value until the next turn.
+- **TPS** — `⚡ 48.2 tok/s` in the footer status area, dim like the native stats. Live per-message speed while streaming; once generation stops it switches to the session average (cumulative output tokens ÷ cumulative pure generation time, tool waits and TTFT excluded). Pinned to the session — never cleared mid-run, only on a new/other session.
 - **`/dragon`** — optional runtime border-color switch.
 
 ## Install
@@ -26,7 +26,7 @@ Restart pi. Later edits: `/reload`.
 Constants at the top of `index.ts`: `BORDER_HEX`, `PROMPT_LEAD`, `PROMPT_GLYPH`, `EDITOR_ROUNDED`, `WORKING_WORDS`, `WORKING_ROTATE_MS`, `ROUNDED_ENABLED`, `TPS_*`, …
 
 - **Prompt** — `PROMPT_LEAD` is the space before the prompt, `PROMPT_GLYPH` the glyph (`">"`; `""` disables, or use `❯` / `›` / `▸`). Indent width follows the real glyph width, and the prompt uses the border color so `/dragon` recolors it.
-- **TPS** — uses `usage.output` (thinking tokens included) and starts at the first streamed token, so it measures pure generation speed. `TPS_PREFIX` / `TPS_SUFFIX` (`⚡ ` / ` tok/s`), `TPS_REFRESH_MS` throttles redraws, `TPS_ENABLED = false` disables it. Drawn via `ctx.ui.setStatus()` on the extension-status line, leaving the native `↑↓R W $ %` line untouched.
+- **TPS** — uses `usage.output` (thinking tokens included) and starts at the first streamed token, so it measures pure generation speed. `TPS_PREFIX` / `TPS_SUFFIX` (`⚡ ` / ` tok/s`), `TPS_REFRESH_MS` throttles redraws, `TPS_ENABLED = false` disables it. Streaming shows the current message's live speed; at every stop it shows the session average (cumulative tokens ÷ cumulative pure generation seconds, tool waits and TTFT excluded). Only `session_start` clears it. Drawn via `ctx.ui.setStatus()` on the extension-status line, leaving the native `↑↓R W $ %` line untouched.
 - **Collapsed thinking** — `/dragon thinking` toggles the live second line; `THINKING_COLLAPSED_ENABLED` is the default when nothing is saved, `THINKING_HINT` is the suffix shown after the thinking block ends (empty string hides it). The header line is pi's own `Thinking...`; the live line follows pi's style (`italic` + `thinkingText`), the hint is `dim`.
 
 ## Colors · `/dragon`

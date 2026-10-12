@@ -108,9 +108,10 @@ const WORKING_SUFFIX = "…";
  * 底部状态栏的生成速度统计（TPS，tokens/s）。
  *
  * 口径：用 usage.output（已含 reasoning / thinking token）。
- * 从第一个 token 到达才开始计时，所以不含首字延迟（TTFT），是纯生成速度。
- * 生成过程中实时刷新，一条 assistant 消息结束后保留最终值，
- * 直到下一轮 turn_start 才清空。不想要就设 TPS_ENABLED = false。
+ * 从第一个 token 到达才开始计时，所以不含首字延迟（TTFT），也不含等工具 / 等网络的时间。
+ * 生成过程中显示当条消息的实时速度；一旦停下（一条消息结束 / 整轮结束）就换成
+ * 整个会话的平均值（累计 tokens ÷ 累计生成时间）。数值整段会话都不消失，
+ * 只有 session_start（新会话 / 切会话）才清空。不想要就设 TPS_ENABLED = false。
  *
  * 显示成原生风格的一行深灰文字：`⚡ 48.2 tok/s`（颜色用主题的 dim，
  * 和 footer 里的 ↑↓R W 统计同款）。它走 ctx.ui.setStatus()，
@@ -978,10 +979,13 @@ export default function (pi: ExtensionAPI) {
 	// 一轮结束就停掉轮换，省得空闲时还在空转。
 	pi.on("agent_end", () => stopRotating());
 
-	// ── TPS：底部状态栏的生成速度统计（实时 + 保留末值）──
+	// ── TPS：底部状态栏的生成速度统计（流式实时 / 停下显示会话平均）──
 	// 走 ctx.ui.setStatus()，占扩展状态那一行；原生 footer 的 ↑↓ 统计行不动。
 	let tpsStartMs: number | undefined;
 	let tpsLastRenderMs = 0;
+	// 会话级累计：tokens 与「纯生成时间」之和（不含 TTFT，也不含等工具 / 等网络的时间）。
+	let tpsSumTokens = 0;
+	let tpsSumSeconds = 0;
 
 	const writeTps = (ctx: ExtensionContext, value: number | undefined): void => {
 		ctx.ui.setStatus(
@@ -992,12 +996,18 @@ export default function (pi: ExtensionAPI) {
 		);
 	};
 
-	// 新一轮开始先清空，等第一个 token 到了再重新计时。
-	pi.on("turn_start", (_event, ctx) => {
+	/** 停下（消息结束 / 整轮结束）时显示：会话累计 tokens ÷ 累计纯生成时间。 */
+	const writeSessionAverage = (ctx: ExtensionContext): void => {
+		if (tpsSumSeconds <= 0 || tpsSumTokens <= 0) return;
+		writeTps(ctx, tpsSumTokens / tpsSumSeconds);
+	};
+
+	// 新一轮只重置当条消息的计时、不清空显示：会话累计值保留（中途不消失），
+	// 首个 token 到了再重新计时；只有 session_start（新会话 / 切会话）才真正清掉。
+	pi.on("turn_start", () => {
 		if (!TPS_ENABLED) return;
 		tpsStartMs = undefined;
 		tpsLastRenderMs = 0;
-		writeTps(ctx, undefined);
 	});
 
 	pi.on("message_update", (event, ctx) => {
@@ -1020,7 +1030,8 @@ export default function (pi: ExtensionAPI) {
 		writeTps(ctx, tokens / seconds);
 	});
 
-	// 一条 assistant 消息结束：用最终 usage 算出准数值，并保留下来。
+	// 一条 assistant 消息结束：把这轮的 tokens 与纯生成秒数累进会话，
+	// 然后显示整个会话的平均速度 —— 停下时看到的就是平均值。
 	pi.on("message_end", (event, ctx) => {
 		if (!TPS_ENABLED) return;
 		const message = event.message as unknown as AssistantMessageLike;
@@ -1030,7 +1041,14 @@ export default function (pi: ExtensionAPI) {
 		const tokens = countOutputTokens(message);
 		tpsStartMs = undefined;
 		if (tokens <= 0 || seconds <= 0) return;
-		writeTps(ctx, tokens / seconds);
+		tpsSumTokens += tokens;
+		tpsSumSeconds += seconds;
+		writeSessionAverage(ctx);
+	});
+
+	// 整轮结束再确认一次平均值（中途 abort / 没有 message_end 时也保证对得上）。
+	pi.on("agent_end", (_event, ctx) => {
+		if (TPS_ENABLED) writeSessionAverage(ctx);
 	});
 
 	pi.on("session_start", (_event, ctx) => {
@@ -1038,8 +1056,12 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.setWorkingMessage(WORKING_TEXT);
 		}
 
-		// 新会话/切会话：清掉上一条会话遗留的 TPS。
-		if (TPS_ENABLED) writeTps(ctx, undefined);
+		// 新会话/切会话：清掉上一条会话遗留的 TPS 与会话累计。
+		if (TPS_ENABLED) {
+			tpsSumTokens = 0;
+			tpsSumSeconds = 0;
+			writeTps(ctx, undefined);
+		}
 
 		const mode = ctx.ui.theme.getColorMode() as ColorMode;
 		border.setMode(mode);
