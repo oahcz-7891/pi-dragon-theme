@@ -113,13 +113,13 @@ const WORKING_SUFFIX = "…";
  * 整个会话的平均值（累计 tokens ÷ 累计生成时间）。数值整段会话都不消失，
  * 只有 session_start（新会话 / 切会话）才清空。不想要就设 TPS_ENABLED = false。
  *
- * 显示成原生风格的一行深灰文字：`⚡ 48.2 tok/s`（颜色用主题的 dim，
- * 和 footer 里的 ↑↓R W 统计同款）。它走 ctx.ui.setStatus()，
+ * 显示成一行主题色文字：`48.2 tok/s`（用边框那套配色 border.paint，
+ * 跟 /dragon 换色联动）。它走 ctx.ui.setStatus()，
  * 占状态栏扩展状态那一行，不会改动原生 footer。
  */
 const TPS_ENABLED = true;
-/** 数字前后的文案；TPS_PREFIX 留空就只有数字。 */
-const TPS_PREFIX = "⚡ ";
+/** 数字前后的文案；默认只有 ` tok/s`，想要前缀（比如 ⚡）就填这里。 */
+const TPS_PREFIX = "";
 const TPS_SUFFIX = " tok/s";
 /** 实时刷新节流（毫秒）：delta 来得太密，没必要每个 token 都重绘一次。 */
 const TPS_REFRESH_MS = 250;
@@ -863,11 +863,14 @@ export default function (pi: ExtensionAPI) {
 	const border = new BorderColor(readSavedHex() ?? BORDER_HEX);
 	// 留着给 /dragon 换色后主动重绘，不然要等下一次按键才看到新颜色。
 	let currentTui: TUI | undefined;
+	// 同上：换色后按新颜色重画状态栏里的 TPS（TPS 那一段初始化时赋值）。
+	let repaintTpsStatus: ((ctx: ExtensionContext) => void) | undefined;
 
 	/** 应用配色：改内存 → 重绘 → 落盘。 */
 	const applyColor = (hex: string, label: string, ctx: ExtensionContext): void => {
 		border.setHex(hex);
 		currentTui?.requestRender(true);
+		repaintTpsStatus?.(ctx);
 
 		const err = saveHex(hex);
 		ctx.ui.notify(
@@ -1007,19 +1010,26 @@ export default function (pi: ExtensionAPI) {
 
 	// ── TPS：底部状态栏的生成速度统计（流式实时 / 停下显示会话平均）──
 	// 走 ctx.ui.setStatus()，占扩展状态那一行；原生 footer 的 ↑↓ 统计行不动。
+	// 颜色跟边框同一个源（border.paint），所以 /dragon 换色后这里跟着变。
 	let tpsStartMs: number | undefined;
 	let tpsLastRenderMs = 0;
+	// 当前显示的数值，换色时要拿它用新颜色重画一次。
+	let tpsShownValue: number | undefined;
 	// 会话级累计：tokens 与「纯生成时间」之和（不含 TTFT，也不含等工具 / 等网络的时间）。
 	let tpsSumTokens = 0;
 	let tpsSumSeconds = 0;
 
+	const tpsText = (value: number): string => `${TPS_PREFIX}${formatTps(value)}${TPS_SUFFIX}`;
+
 	const writeTps = (ctx: ExtensionContext, value: number | undefined): void => {
-		ctx.ui.setStatus(
-			TPS_KEY,
-			value === undefined
-				? undefined
-				: ctx.ui.theme.fg("dim", `${TPS_PREFIX}${formatTps(value)}${TPS_SUFFIX}`),
-		);
+		tpsShownValue = value;
+		ctx.ui.setStatus(TPS_KEY, value === undefined ? undefined : border.paint(tpsText(value)));
+	};
+
+	// 换配色后重画 TPS，否则那一行要等到下一条消息才变色。
+	repaintTpsStatus = (ctx) => {
+		if (!TPS_ENABLED || tpsShownValue === undefined) return;
+		ctx.ui.setStatus(TPS_KEY, border.paint(tpsText(tpsShownValue)));
 	};
 
 	/** 停下（消息结束 / 整轮结束）时显示：会话累计 tokens ÷ 累计纯生成时间。 */
