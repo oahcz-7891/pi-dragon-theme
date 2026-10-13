@@ -9,7 +9,7 @@ Dragon Ball / Namek-flavored pi extension: rounded editor frame, framed modals, 
 - **Working words** — "Working" replaced by a rotating Namekian word (`Purunga…`).
 - **Collapsed thinking** — with thinking hidden (`ctrl+T`), pi's `Thinking...` header is kept and a second line goes live under it: while the model thinks it shows the **latest line of the reasoning** (tail-truncated, so the newest words stay visible), and once the block finishes it appends a dim `… (ctrl+t 展开)` hint. Only collapsed blocks change; expanded thinking and the click-to-peek on a single block are untouched. Toggle with `/dragon thinking` (persisted), or set `THINKING_COLLAPSED_ENABLED = false` for a new default.
 - **TPS** — `⚡ 48.2 tok/s` in the footer status area, dim like the native stats. Live per-message speed while streaming; once generation stops it switches to the session average (cumulative output tokens ÷ cumulative pure generation time, tool waits and TTFT excluded). Pinned to the session — never cleared mid-run, only on a new/other session.
-- **`/dragon`** — optional runtime border-color switch.
+- **`/dragon`** — runtime settings menu: border color and the collapsed-thinking on/off toggle, both changed in place with Space.
 
 ## Install
 
@@ -34,13 +34,20 @@ Constants at the top of `index.ts`: `BORDER_HEX`, `PROMPT_LEAD`, `PROMPT_GLYPH`,
 Defaults to `BORDER_HEX` (`#f0c674`, Goku gold). Switching is optional — prefer the command over editing the file:
 
 ```
-/dragon                # picker menu (shows the current color)
+/dragon                # settings menu (see below)
 /dragon goku           # Goku gold      #f0c674   (default)
 /dragon vegeta         # Vegeta blue    #7d9ed4
 /dragon piccolo        # Piccolo green  #7fc95a
 /dragon thinking       # toggle the live collapsed-thinking second line (on/off)
 ```
 
-Surface text is English; `gold` / `blue` / `green` also work as aliases. The picker uses `ctx.ui.custom()` (`picker.ts`) so it gets the rounded frame too — built-in `select` / `confirm` / `input` / `editor` dialogs bypass `custom()` and cannot be framed. Choices are saved to `<agent dir>/.dragon-theme.json` (`~/.pi/agent/`, overridable via `$PI_CODING_AGENT_DIR` or `$PI_DRAGON_THEME_CONFIG`) and survive restarts; `/dragon thinking` is persisted as `collapsedThinking` in the same file (default comes from `THINKING_COLLAPSED_ENABLED`).
+`/dragon` with no argument opens a settings menu (a `SettingsList`). Both rows are value rows — move the cursor with `↑↓` and press `Space` (or `Enter`) to change the value in place, without closing the menu:
+
+- **Border color** — cycles `goku · Goku gold` → `vegeta · Vegeta blue` → `piccolo · Piccolo green` → back; the new color applies on the next frame.
+- **Collapsed thinking** — flips `on` / `off`.
+
+The menu stays open while you change things; `Esc` closes it.
+
+Surface text is English; `gold` / `blue` / `green` also work as aliases. The picker uses `ctx.ui.custom()` (`picker.ts`) so it gets the rounded frame too — built-in `select` / `confirm` / `input` / `editor` dialogs bypass `custom()` and cannot be framed. Choices are saved to `<agent dir>/.dragon-theme.json` (`~/.pi/agent/`, overridable via `$PI_CODING_AGENT_DIR` or `$PI_DRAGON_THEME_CONFIG`) and survive restarts; the thinking toggle is persisted as `collapsedThinking` in the same file (default comes from `THINKING_COLLAPSED_ENABLED`).
 
 Editor border, modal wrapper, spinner, and thinking / bash-mode border all read the same mutable color source, so a switch applies on the next frame — no `/reload`, and draft text is kept.

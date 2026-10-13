@@ -43,7 +43,7 @@ import type {
 	TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { installRoundedCustom, type RoundedDialogsConfig } from "./rounded-frame.ts";
-import { PalettePicker } from "./picker.ts";
+import { DragonMenu } from "./picker.ts";
 import {
 	PALETTES,
 	readSavedCollapsedThinking,
@@ -378,7 +378,8 @@ class FixedBorderEditor extends CustomEditor {
 		const out: string[] = [];
 
 		// 提示符占掉的列，用 ─ 补在横边框后面，保持框宽一致。
-		const borderPad = pw > 0 ? "─".repeat(pw) : "";
+		// 必须一并着色，否则这几格会保持终端默认前景色（看着像「最右边颜色不对」）。
+		const borderPad = pw > 0 ? this.borderColor("─".repeat(pw)) : "";
 		const left = framed ? corner("│") : "";
 		const right = framed ? corner("│") : "";
 
@@ -877,6 +878,28 @@ export default function (pi: ExtensionAPI) {
 		);
 	};
 
+	/** 写入「收起思考实时行」开关：改内存 → 重绘 → 落盘。返回保存错误（无错为 undefined）。 */
+	const setCollapsedThinking = (enabled: boolean): string | undefined => {
+		const store = thinkingStore();
+		store.enabled = enabled;
+		const err = saveCollapsedThinking(enabled);
+		refreshCollapsedThinking(currentTui);
+		return err;
+	};
+
+	/** 切换「收起思考实时行」并弹一条通知（给 /dragon thinking 用）。 */
+	const toggleCollapsedThinking = (ctx: ExtensionContext): void => {
+		const store = thinkingStore();
+		const next = !(store.enabled ?? THINKING_COLLAPSED_ENABLED);
+		const err = setCollapsedThinking(next);
+		ctx.ui.notify(
+			err
+				? `Collapsed thinking line → ${next ? "on" : "off"}, but saving the config failed: ${err}`
+				: `Collapsed thinking line → ${next ? "on" : "off"} (saved)`,
+			err ? "warning" : "info",
+		);
+	};
+
 	// ── /dragon：切换边框配色；/dragon thinking 切「收起思考实时行」──
 	pi.registerCommand("dragon", {
 		description:
@@ -905,36 +928,39 @@ export default function (pi: ExtensionAPI) {
 
 			// /dragon thinking → 开关收起思考的实时行（写配置，重启仍生效）。
 			if (arg === "thinking" || arg === "think") {
-				const store = thinkingStore();
-				store.enabled = !(store.enabled ?? THINKING_COLLAPSED_ENABLED);
-				const err = saveCollapsedThinking(store.enabled);
-				refreshCollapsedThinking(currentTui);
-				ctx.ui.notify(
-					err
-						? `Collapsed thinking line → ${store.enabled ? "on" : "off"}, but saving the config failed: ${err}`
-						: `Collapsed thinking line → ${store.enabled ? "on" : "off"} (saved)`,
-					err ? "warning" : "info",
-				);
+				toggleCollapsedThinking(ctx);
 				return;
 			}
 
-			// 不带参数 → 弹选择菜单。
+			// 不带参数 → 弹菜单。
 			// 走 ctx.ui.custom() 而不是 ctx.ui.select()：内置 select 不经过 custom()，
 			// 套不上圆角框（见 picker.ts 顶部注释）。
 			if (arg.length === 0) {
 				// 当前配色用名字表示；万一配置里是手写的自定义 hex 才回退到 hex。
 				const current = PALETTES.find((p) => p.hex === border.hex);
-				const picked = await ctx.ui.custom<string | undefined>(
+				// 菜单自己不关：选色 / 切换开关即时生效，Esc 才退出。
+				await ctx.ui.custom<void>(
 					(_tui, theme, _keybindings, done) =>
-						new PalettePicker(
-							`Border color (current: ${current?.en ?? border.hex})`,
-							PALETTES.map((p) => ({ value: p.key, label: `${p.key} · ${p.en}` })),
-							theme,
+						new DragonMenu(
+							{
+								theme,
+								colorValue: current ? `${current.key} · ${current.en}` : border.hex,
+								colors: PALETTES.map((p) => ({
+									key: p.key,
+									label: `${p.key} · ${p.en}`,
+								})),
+								thinkingEnabled: thinkingStore().enabled === true,
+								onColor: (key) => {
+									const target = PALETTES.find((p) => p.key === key);
+									if (target) {
+										applyColor(target.hex, `${target.key} · ${target.en}`, ctx);
+									}
+								},
+								onThinking: (enabled) => setCollapsedThinking(enabled),
+							},
 							done,
 						),
 				);
-				const target = PALETTES.find((p) => p.key === picked);
-				if (target) applyColor(target.hex, `${target.key} · ${target.en}`, ctx);
 				return;
 			}
 
