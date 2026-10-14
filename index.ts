@@ -46,11 +46,15 @@ import { installRoundedCustom, type RoundedDialogsConfig } from "./rounded-frame
 import { DragonMenu } from "./picker.ts";
 import {
 	PALETTES,
-	readSavedCollapsedThinking,
+	parseThinkingMode,
 	readSavedHex,
+	readSavedThinkingMode,
 	resolvePalette,
-	saveCollapsedThinking,
 	saveHex,
+	saveThinkingMode,
+	THINKING_MODES,
+	THINKING_MODE_LABELS,
+	type ThinkingMode,
 } from "./palette.ts";
 
 // ─────────────────────────────── 配置 ───────────────────────────────
@@ -170,16 +174,20 @@ const ROUNDED_CONFIG: RoundedDialogsConfig = {
 };
 
 /**
- * 收起思考（ctrl+T）时，在 pi 原生那行静态的 "Thinking..." 下面再接一行实时内容。
+ * 收起思考（ctrl+T 隐藏）时思考块怎么画 —— 三选一，由 `/dragon thinking` 或
+ * `/dragon` 菜单里的 Collapsed thinking 这一项决定；改过就写进配置文件，存过以存的为准。
  *
- *   第一行  Thinking...（pi 原生，原样保留）
- *   流式中：第二行 = 思考的最新一行，超宽时保留尾部、前面加省略号（像个跑马灯）
- *   结束后：第二行行末追加展开提示（THINKING_HINT）
+ * 三个值里的“行”只数实时内容，不含 pi 原生那行 `Thinking...`：
  *
- * 只影响折叠状态；展开时 pi 原生渲染完全不动。设 false 就退回原生的单独一行静态文案。
- * 运行时也可用 `/dragon thinking` 开关（会写进配置文件；存过就以存的为准）。
+ *   "line1"   pi 原生标题 `Thinking...` + 1 行实时内容
+ *   "line2"   pi 原生标题 `Thinking...` + 2 行实时内容
+ *              流式中 = 最新 N 行（超宽保留尾部、前面加省略号，像个跑马灯）
+ *              结束后 = 最后一行末尾追加展开提示（THINKING_HINT）
+ *   "hidden"  只显示 pi 原生那行 `Thinking...`，不接任何实时内容
+ *
+ * 只影响折叠状态；展开（ctrl+T 摊开、或点单个块）时 pi 原生渲染完全不动。
  */
-const THINKING_COLLAPSED_ENABLED = true;
+const THINKING_MODE_DEFAULT: ThinkingMode = "line2";
 
 /**
  * 思考结束后追加在实时行末尾的提示（前面会自动留一个空格）。
@@ -498,15 +506,17 @@ type CollapsedThinkingApplier = (
 	component: AssistantComponentLike,
 	message: unknown,
 	isStreaming: unknown,
-) => void;
+) => number | void;
 
 type ThinkingStore = {
 	containerPatched?: boolean;
-	/** 运行时的开关（/dragon thinking）；未初始化时视为关。 */
-	enabled?: boolean;
+	/** 运行时的显示方式（/dragon thinking）；未初始化时按 THINKING_MODE_DEFAULT。 */
+	mode?: ThinkingMode;
 	theme?: Theme;
 	/** 每次扩展加载都指向最新代码，所以改上面的常量后 /reload 立即生效。 */
 	apply?: CollapsedThinkingApplier;
+	/** 诊断用：最近一轮 refresh 里 apply 实际处理了多少个思考块。 */
+	blocksHandled?: number;
 };
 
 const THINKING_STORE_KEY = Symbol.for("pi-dragon-theme.collapsed-thinking");
@@ -550,14 +560,15 @@ function hasBlockAfter(content: readonly ThinkingBlockLike[], index: number): bo
 	return content.length > index + 1;
 }
 
-/** 取一段多行文本里最后一个非空行。 */
-function lastNonEmptyLine(text: string): string {
-	const lines = text.split("\n");
-	for (let i = lines.length - 1; i >= 0; i--) {
-		const line = lines[i]!.trim();
-		if (line) return line;
+/** 取一段多行文本里最后的 count 个非空行（顺序保持原样，最旧的在前）。 */
+function lastNonEmptyLines(text: string, count: number): string[] {
+	const all = text.split("\n");
+	const picked: string[] = [];
+	for (let i = all.length - 1; i >= 0 && picked.length < count; i--) {
+		const line = all[i]!.trim();
+		if (line) picked.unshift(line);
 	}
-	return "";
+	return picked;
 }
 
 /**
@@ -576,12 +587,13 @@ function tailTruncate(text: string, maxWidth: number, ellipsis = "…"): string 
 }
 
 /**
- * 折叠块里的第二行：思考的实时内容。样式跟 pi 原生一致（斜体 + thinkingText 色），
- * 只是把静态文案换成实时内容；完成后行末追加一个 dim 色的展开提示。
+ * 折叠块里的实时内容行：样式跟 pi 原生一致（斜体 + thinkingText 色），
+ * 行数由显示方式决定（1 line / 2 lines）；完成后在最后一行末尾追加 dim 色的展开提示。
+ * 每行都按终端宽度做尾部截断 —— 流式时最新内容在末尾，保留尾部才看得到进展。
  */
 class CollapsedThinkingLine implements Component {
 	constructor(
-		private readonly text: string,
+		private readonly lines: readonly string[],
 		private readonly done: boolean,
 		private readonly outputPad: number,
 	) {}
@@ -597,46 +609,49 @@ class CollapsedThinkingLine implements Component {
 
 		const theme = thinkingStore().theme;
 		const hintPlain = this.done && THINKING_HINT ? ` ${THINKING_HINT}` : "";
-		// 太窄就丢提示，优先保住正文那一行。
+		// 太窄就丢提示，优先保住正文那些行。
 		const showHint = hintPlain !== "" && contentWidth - visibleWidth(hintPlain) >= 8;
 		const hintWidth = showHint ? visibleWidth(hintPlain) : 0;
+		const prefix = " ".repeat(paddingX);
 
-		const bodyPlain = tailTruncate(this.text, Math.max(1, contentWidth - hintWidth));
-		const body = theme ? theme.italic(theme.fg("thinkingText", bodyPlain)) : bodyPlain;
-		const hint = showHint
-			? theme
-				? theme.fg("dim", hintPlain)
-				: hintPlain
-			: "";
-
-		const line = " ".repeat(paddingX) + body + hint;
-		return [line + " ".repeat(Math.max(0, safeWidth - visibleWidth(line)))];
+		return this.lines.map((text, index) => {
+			const isLast = index === this.lines.length - 1;
+			const bodyPlain = tailTruncate(
+				text,
+				Math.max(1, contentWidth - (isLast ? hintWidth : 0)),
+			);
+			const body = theme ? theme.italic(theme.fg("thinkingText", bodyPlain)) : bodyPlain;
+			const hint =
+				isLast && showHint ? (theme ? theme.fg("dim", hintPlain) : hintPlain) : "";
+			const line = prefix + body + hint;
+			return line + " ".repeat(Math.max(0, safeWidth - visibleWidth(line)));
+		});
 	}
 
 	invalidate(): void {}
 }
 
 /**
- * 折叠时的两行块：
+ * 折叠时的多行块：
  *   第一行  Thinking...（pi 原生的那条标题）
- *   第二行  实时最新行 … (ctrl+t 展开)
+ *   下面 N 行  实时内容（1 line / 2 lines），最后一行末尾 … (ctrl+t 展开)
  *
  * 第一行直接沿用 pi 自己的 Text 组件，所以 setHiddenThinkingLabel() /
- * 主题切换都不用我们管；我们只往下多接一行。
+ * 主题切换都不用我们管；我们只往下多接几行。
  */
 class CollapsedThinkingBlock implements Component {
 	constructor(
 		private readonly label: Component,
-		private readonly line: Component,
+		private readonly content: Component,
 	) {}
 
 	render(width: number): string[] {
-		return [...this.label.render(width), ...this.line.render(width)];
+		return [...this.label.render(width), ...this.content.render(width)];
 	}
 
 	invalidate(): void {
 		this.label.invalidate();
-		this.line.invalidate();
+		this.content.invalidate();
 	}
 }
 
@@ -652,19 +667,28 @@ function isMouseRegionLike(value: unknown): value is MouseRegionLike {
 	);
 }
 
-/** 原方法跑完后，把每个 hidden 思考块的静态 Text 换成动态那一行。 */
+/**
+ * 原方法跑完后，按当前显示方式给每个 collapsed 思考块的 pi 原生 "Thinking..." 下面接实时内容：
+ *   "line1"  → 接 1 行
+ *   "line2"  → 接 2 行
+ *   "hidden" → 不接，保持 pi 原生的单行 "Thinking..."（直接返回）
+ * 展开状态（ctrl+T 摊开 / 点单个块）一律不动。
+ */
 function applyCollapsedThinking(
 	component: AssistantComponentLike,
 	message: unknown,
 	isStreaming: unknown,
-): void {
-	if (thinkingStore().enabled !== true) return;
+): number {
+	const mode = thinkingStore().mode;
+	// hidden = 只留 pi 原生那行，什么都不用包。
+	if (mode !== "line1" && mode !== "line2") return 0;
+	const lineCount = mode === "line2" ? 2 : 1;
 	const content = (message as { content?: readonly ThinkingBlockLike[] } | undefined)?.content;
 	const children = component.contentContainer?.children;
-	if (!Array.isArray(content) || !Array.isArray(children)) return;
+	if (!Array.isArray(content) || !Array.isArray(children)) return 0;
 
 	const runs = collectThinkingRuns(content);
-	if (runs.length === 0) return;
+	if (runs.length === 0) return 0;
 
 	const streaming =
 		typeof isStreaming === "boolean" ? isStreaming : component.isStreaming === true;
@@ -673,28 +697,32 @@ function applyCollapsedThinking(
 	const pad = typeof component.outputPad === "number" ? component.outputPad : 1;
 
 	let runIndex = 0;
+	let applied = 0;
 	for (const child of children) {
 		if (!isMouseRegionLike(child)) continue;
 		const run = runs[runIndex];
 		runIndex += 1;
 		if (!run) break;
 		// 与 pi 一致：单块点击过的临时显示状态优先于全局折叠开关。
+		// 展开的思考块本来就是原生 Markdown，两种模式都原样留着。
 		if (!(overrides?.get(runIndex - 1) ?? hideAll)) continue;
 
 		const inner = child.child;
 		if (!inner || typeof inner.text !== "string") continue;
 
-		const line = lastNonEmptyLine(run.text);
-		if (!line) continue;
+		const lines = lastNonEmptyLines(run.text, lineCount);
+		if (lines.length === 0) continue;
 
 		// 思考块结束 = 消息不再流式，或它后面已经接上了新块。
 		const done = !streaming || hasBlockAfter(content, run.lastIndex);
-		// 第一行保留 pi 原生的 Thinking...（直接用它的 Text），第二行才是实时内容。
+		// 第一行保留 pi 原生的 Thinking...（直接用它的 Text），下面接实时内容。
 		child.child = new CollapsedThinkingBlock(
 			inner as unknown as Component,
-			new CollapsedThinkingLine(line, done, pad),
+			new CollapsedThinkingLine(lines, done, pad),
 		);
+		applied += 1;
 	}
+	return applied;
 }
 
 /** 实例上的 hook 标记，避免同一个组件被包两层。 */
@@ -758,7 +786,11 @@ function hookAssistantComponent(component: unknown): void {
 	): void {
 		(original as (m: unknown, s?: boolean) => void).call(this, message, isStreaming);
 		try {
-			thinkingStore().apply?.(this, message, isStreaming);
+			const handled = thinkingStore().apply?.(this, message, isStreaming);
+			if (typeof handled === "number" && handled > 0) {
+				const store = thinkingStore();
+				store.blocksHandled = (store.blocksHandled ?? 0) + handled;
+			}
 		} catch {
 			// pi 内部结构变了就静默退回原生渲染。
 		}
@@ -809,33 +841,42 @@ function installCollapsedThinking(tui: unknown): void {
 	const store = thinkingStore();
 	// 每次加载（含 /reload）都指向最新代码，改常量即时生效。
 	store.apply = applyCollapsedThinking;
-	// 开关：配置文件里存过就用存的，否则用常量默认；/dragon thinking 改的就是它。
-	store.enabled = readSavedCollapsedThinking() ?? THINKING_COLLAPSED_ENABLED;
+	// 显示方式：配置文件里存过就用存的，否则用常量默认；/dragon thinking 改的就是它。
+	store.mode = readSavedThinkingMode() ?? THINKING_MODE_DEFAULT;
 	patchContainerAddChild(tui);
 	// /reload 时历史消息早就 addChild 完了，拦不到；直接扫一遍现有树补 hook。
 	hookExistingComponents(tui);
 }
 
-/** 重画已渲染的助理组件，让开关立即生效（关掉就退回原生 Thinking...）。 */
-function refreshCollapsedThinking(tui: unknown): void {
+/** 重画已渲染的助理组件，让新的显示方式立即生效；返回命中的助理组件数（诊断用）。 */
+function refreshCollapsedThinking(tui: unknown): number {
 	const seen = new Set<unknown>();
 	const stack: unknown[] = [tui];
+	let touched = 0;
 	while (stack.length > 0) {
 		const node = stack.pop();
 		if (!node || typeof node !== "object" || seen.has(node)) continue;
 		seen.add(node);
 		if (isAssistantComponent(node)) {
+			touched += 1;
 			try {
 				(node as { invalidate?: () => void }).invalidate?.();
 			} catch {
 				// 静默
 			}
 		}
-		const children = (node as { children?: unknown }).children;
-		if (Array.isArray(children)) stack.push(...children);
+		pushChildren(stack, node);
 	}
 	// 让 TUI 立刻重画。
 	(tui as { requestRender?: (force?: boolean) => void }).requestRender?.(true);
+	return touched;
+}
+
+/** 把组件的子节点入栈；用循环 push 避开超长数组的 spread 上限。 */
+function pushChildren(stack: unknown[], node: unknown): void {
+	const children = (node as { children?: unknown }).children;
+	if (!Array.isArray(children)) return;
+	for (const child of children) stack.push(child);
 }
 
 /** 扫一遍已有组件树，给已经渲染出来的助理组件补 hook。 */
@@ -851,9 +892,21 @@ function hookExistingComponents(root: unknown): void {
 		} catch {
 			// 静默
 		}
-		const children = (node as { children?: unknown }).children;
-		if (Array.isArray(children)) stack.push(...children);
+		pushChildren(stack, node);
 	}
+}
+
+// ── 模块加载即接线（不依赖 session_start 时序）──
+//
+// pi 用 jiti 重新加载扩展时（/reload 或重启），老的 addChild hook 还挂在
+// Container.prototype 上，它每次都读全局 store 里的 apply/mode。
+// 所以模块一加载就把最新实现和配好的模式接进去 —— 万一这次加载没走到
+// session_start / setEditorComponent（那才是 installCollapsedThinking 的入口），
+// 也不会出现「新命令 + 旧 apply」这种选了 2 lines 却只有一行的错配。
+{
+	const store = thinkingStore();
+	store.apply = applyCollapsedThinking;
+	store.mode = readSavedThinkingMode() ?? THINKING_MODE_DEFAULT;
 }
 
 // ───────────────────────────── 注册 ─────────────────────────────
@@ -881,34 +934,44 @@ export default function (pi: ExtensionAPI) {
 		);
 	};
 
-	/** 写入「收起思考实时行」开关：改内存 → 重绘 → 落盘。返回保存错误（无错为 undefined）。 */
-	const setCollapsedThinking = (enabled: boolean): string | undefined => {
+	/** 写入「收起思考」显示方式：改内存 → 重绘 → 落盘。返回保存错误与重绘诊断（无错为 undefined）。 */
+	const setCollapsedThinking = (
+		mode: ThinkingMode,
+	): { err?: string; components: number; blocks: number } => {
 		const store = thinkingStore();
-		store.enabled = enabled;
-		const err = saveCollapsedThinking(enabled);
-		refreshCollapsedThinking(currentTui);
-		return err;
+		store.mode = mode;
+		const err = saveThinkingMode(mode);
+		store.blocksHandled = 0;
+		const components = refreshCollapsedThinking(currentTui);
+		return { err, components, blocks: store.blocksHandled ?? 0 };
 	};
 
-	/** 切换「收起思考实时行」并弹一条通知（给 /dragon thinking 用）。 */
-	const toggleCollapsedThinking = (ctx: ExtensionContext): void => {
+	/** 切到某个显示方式并弹一条通知；不传 explicit 就循环到下一个（给 /dragon thinking 用）。 */
+	const cycleCollapsedThinking = (ctx: ExtensionContext, explicit?: ThinkingMode): void => {
 		const store = thinkingStore();
-		const next = !(store.enabled ?? THINKING_COLLAPSED_ENABLED);
-		const err = setCollapsedThinking(next);
+		const current = store.mode ?? THINKING_MODE_DEFAULT;
+		const next =
+			explicit ??
+			THINKING_MODES[(THINKING_MODES.indexOf(current) + 1) % THINKING_MODES.length]!;
+		const { err, components, blocks } = setCollapsedThinking(next);
+		const label = THINKING_MODE_LABELS[next];
+		// 诊断尾巴：旧消息只有看得到 components/blocks 才知道重绘到底有没有扫到思考块。
+		const diag = ` · ${components} message(s), ${blocks} block(s)`;
 		ctx.ui.notify(
 			err
-				? `Collapsed thinking line → ${next ? "on" : "off"}, but saving the config failed: ${err}`
-				: `Collapsed thinking line → ${next ? "on" : "off"} (saved)`,
+				? `Collapsed thinking → ${label}, but saving the config failed: ${err}`
+				: `Collapsed thinking → ${label} (saved)${diag}`,
 			err ? "warning" : "info",
 		);
 	};
 
-	// ── /dragon：切换边框配色；/dragon thinking 切「收起思考实时行」──
+	// ── /dragon：切换边框配色；/dragon thinking [1|2|off] 切思考折叠时的显示方式 ──
 	pi.registerCommand("dragon", {
 		description:
-			"Border color (goku / vegeta / piccolo), or `thinking` to toggle the live collapsed-thinking line",
+			"Border color (goku / vegeta / piccolo), or `thinking` to switch how collapsed thinking shows (1 line / 2 lines / hidden)",
 		getArgumentCompletions: (prefix) => {
 			const needle = prefix.trim().toLowerCase();
+			const current = thinkingStore().mode ?? THINKING_MODE_DEFAULT;
 			const items = [
 				...PALETTES.map((p) => ({
 					value: p.key,
@@ -918,9 +981,22 @@ export default function (pi: ExtensionAPI) {
 				{
 					value: "thinking",
 					label: "thinking",
-					description: `Toggle live collapsed-thinking line (now: ${
-						thinkingStore().enabled ? "on" : "off"
-					})`,
+					description: `Cycle collapsed-thinking display (now: ${THINKING_MODE_LABELS[current]})`,
+				},
+				{
+					value: "thinking 1",
+					label: "thinking 1",
+					description: "Only pi's native `Thinking...` line",
+				},
+				{
+					value: "thinking 2",
+					label: "thinking 2",
+					description: "`Thinking...` plus a live second line",
+				},
+				{
+					value: "thinking off",
+					label: "thinking off",
+					description: "Hide the thinking block completely",
 				},
 			];
 			const hit = items.filter((x) => x.value.startsWith(needle));
@@ -928,10 +1004,19 @@ export default function (pi: ExtensionAPI) {
 		},
 		handler: async (args, ctx) => {
 			const arg = args.trim().toLowerCase();
+			const [head = "", ...rest] = arg.split(/\s+/);
 
-			// /dragon thinking → 开关收起思考的实时行（写配置，重启仍生效）。
-			if (arg === "thinking" || arg === "think") {
-				toggleCollapsedThinking(ctx);
+			// /dragon thinking [1|2|off] → 收起思考怎么显示（写配置，重启仍生效）。
+			if (head === "thinking" || head === "think") {
+				const raw = rest.join(" ").trim();
+				if (raw.length > 0 && parseThinkingMode(raw) === undefined) {
+					ctx.ui.notify(
+						`Unknown thinking mode "${raw}". Try: 1 / 2 / off (no argument cycles)`,
+						"warning",
+					);
+					return;
+				}
+				cycleCollapsedThinking(ctx, parseThinkingMode(raw));
 				return;
 			}
 
@@ -952,14 +1037,16 @@ export default function (pi: ExtensionAPI) {
 									key: p.key,
 									label: `${p.key} · ${p.en}`,
 								})),
-								thinkingEnabled: thinkingStore().enabled === true,
+								thinkingMode: thinkingStore().mode ?? THINKING_MODE_DEFAULT,
 								onColor: (key) => {
 									const target = PALETTES.find((p) => p.key === key);
 									if (target) {
 										applyColor(target.hex, `${target.key} · ${target.en}`, ctx);
 									}
 								},
-								onThinking: (enabled) => setCollapsedThinking(enabled),
+								onThinking: (mode) => {
+									setCollapsedThinking(mode);
+								},
 							},
 							done,
 						),
@@ -1102,7 +1189,7 @@ export default function (pi: ExtensionAPI) {
 		const mode = ctx.ui.theme.getColorMode() as ColorMode;
 		border.setMode(mode);
 
-		// 收起思考（ctrl+T）时的一行动态内容：装 hook，并接上当前主题（主题单例是活的）。
+		// 收起思考（ctrl+T）时的显示方式：装 hook，并接上当前主题（主题单例是活的）。
 		thinkingStore().theme = ctx.ui.theme;
 
 		// 包装共享的 ctx.ui.custom，之后任何扩展的 custom 弹框都会被套上圆角框。

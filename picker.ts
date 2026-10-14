@@ -11,7 +11,7 @@
  * DragonMenu 用 pi-tui 的 SettingsList 搭一个设置页，每一项都能用
  * 空格 / 回车「就地」调节，菜单不关：
  *   - Border color        → 在 goku / vegeta / piccolo 之间循环；
- *   - Collapsed thinking  → on / off 切换。
+ *   - Collapsed thinking  → 在 1 line / 2 lines / hidden 之间循环。
  * 上下键移动光标，Esc 关闭。
  *
  * 键盘导航复用 pi-tui 的 SettingsList，观感和内置弹框一致。
@@ -28,6 +28,7 @@ import {
 	type SettingItem,
 } from "@earendil-works/pi-tui";
 import { getSettingsListTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { THINKING_MODES, THINKING_MODE_LABELS, type ThinkingMode } from "./palette.ts";
 
 /** 一个配色选项：key 是 `/dragon` 的主参数名，label 是菜单里的展示名。 */
 export interface DragonColorOption {
@@ -41,12 +42,12 @@ export interface DragonMenuOptions {
 	colors: DragonColorOption[];
 	/** 当前配色对应的展示名（对不上任何一个时循环会从第一个开始）。 */
 	colorValue: string;
-	/** 「收起思考实时行」当前是否开启。 */
-	thinkingEnabled: boolean;
+	/** 「收起思考」当前的显示方式。 */
+	thinkingMode: ThinkingMode;
 	/** 循环到某个配色后回调（传 key），菜单保持打开。 */
 	onColor: (key: string) => void;
-	/** 把开关切到某个值后回调，菜单保持打开。 */
-	onThinking: (enabled: boolean) => void;
+	/** 把思考显示方式切到某个值后回调，菜单保持打开。 */
+	onThinking: (mode: ThinkingMode) => void;
 }
 
 /**
@@ -63,6 +64,10 @@ export class DragonMenu implements Component, Focusable {
 		// SettingsList 用 values.indexOf(currentValue) 定位，所以 values 得和右侧显示的文字一致。
 		const colorLabels = options.colors.map((c) => c.label);
 		const byLabel = new Map(options.colors.map((c) => [c.label, c.key]));
+		const thinkingLabels = THINKING_MODES.map((mode) => THINKING_MODE_LABELS[mode]);
+		const thinkingByLabel = new Map(
+			THINKING_MODES.map((mode) => [THINKING_MODE_LABELS[mode], mode]),
+		);
 
 		const items: SettingItem[] = [
 			{
@@ -76,9 +81,9 @@ export class DragonMenu implements Component, Focusable {
 				id: "thinking",
 				label: "Collapsed thinking",
 				description:
-					"Live second line under the `Thinking...` header while thinking is hidden. Space toggles it.",
-				currentValue: options.thinkingEnabled ? "on" : "off",
-				values: ["on", "off"],
+					"Live reasoning lines under pi's `Thinking...` header: `1 line` / `2 lines`, or `hidden` for the native header only.",
+				currentValue: THINKING_MODE_LABELS[options.thinkingMode],
+				values: thinkingLabels,
 			},
 		];
 
@@ -92,7 +97,10 @@ export class DragonMenu implements Component, Focusable {
 					if (key !== undefined) options.onColor(key);
 					return;
 				}
-				if (id === "thinking") options.onThinking(newValue === "on");
+				if (id === "thinking") {
+					const mode = thinkingByLabel.get(newValue);
+					if (mode !== undefined) options.onThinking(mode);
+				}
 			},
 			onClose,
 		);

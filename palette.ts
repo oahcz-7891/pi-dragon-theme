@@ -124,13 +124,77 @@ export function saveHex(hex: string): string | undefined {
 	return writeConfig({ borderHex: hex });
 }
 
-/** 读取记住的「收起思考实时行」开关；没存过 → undefined（用 index.ts 的常量默认）。 */
-export function readSavedCollapsedThinking(): boolean | undefined {
-	const value = readConfig().collapsedThinking;
-	return typeof value === "boolean" ? value : undefined;
+// ─────────────────────── 收起思考的显示方式 ───────────────────────
+
+/**
+ * 收起（ctrl+T 隐藏）时思考块怎么画：
+ *   "line1"   pi 原生标题 "Thinking..." + 1 行实时内容
+ *   "line2"   pi 原生标题 "Thinking..." + 2 行实时内容
+ *   "hidden"  只显示 pi 原生那行 "Thinking..."（不加任何实时内容）
+ */
+export type ThinkingMode = "line1" | "line2" | "hidden";
+
+/** 固定的循环顺序（`/dragon thinking` 不带参数时按它往下走）。 */
+export const THINKING_MODES: readonly ThinkingMode[] = ["line1", "line2", "hidden"];
+
+/**
+ * 菜单右侧 / 通知里显示的文案。
+ * “行”只算实时内容，不含 pi 原生那行 `Thinking...`；hidden = 只有原生那行。
+ */
+export const THINKING_MODE_LABELS: Record<ThinkingMode, string> = {
+	line1: "1 line",
+	line2: "2 lines",
+	hidden: "hidden",
+};
+
+/** `/dragon thinking <值>` 的简写解析；空串或认不出来 → undefined（表示循环切换）。 */
+export function parseThinkingMode(input: string): ThinkingMode | undefined {
+	switch (input.trim().toLowerCase()) {
+		case "1":
+		case "1line":
+		case "line1":
+		case "one":
+			return "line1";
+		case "2":
+		case "2lines":
+		case "line2":
+		case "two":
+			return "line2";
+		case "0":
+		case "hide":
+		case "hidden":
+		case "native":
+		case "none":
+		case "off":
+			return "hidden";
+		default:
+			return undefined;
+	}
 }
 
-/** 写入「收起思考实时行」开关。 */
-export function saveCollapsedThinking(enabled: boolean): string | undefined {
-	return writeConfig({ collapsedThinking: enabled });
+function isThinkingMode(value: string): value is ThinkingMode {
+	return (THINKING_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * 读取记住的思考显示方式；没存过 → undefined（用 index.ts 的常量默认）。
+ * 兼容老配置：
+ *   - v0.1 存的是布尔值 `collapsedThinking`（true = 标题 + 1 行内容，false = 只有原生标题）；
+ *   - 过渡期存过 "off" 表示只留原生标题，这里换算成 "hidden"。
+ */
+export function readSavedThinkingMode(): ThinkingMode | undefined {
+	const config = readConfig();
+	const value = config.thinkingMode;
+	if (typeof value === "string") {
+		if (isThinkingMode(value)) return value;
+		if (value === "off" || value === "native") return "hidden";
+	}
+	const legacy = config.collapsedThinking;
+	if (typeof legacy === "boolean") return legacy ? "line1" : "hidden";
+	return undefined;
+}
+
+/** 写入思考显示方式（`/dragon thinking` / 菜单改的就是它）。 */
+export function saveThinkingMode(mode: ThinkingMode): string | undefined {
+	return writeConfig({ thinkingMode: mode });
 }
