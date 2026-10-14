@@ -560,15 +560,26 @@ function hasBlockAfter(content: readonly ThinkingBlockLike[], index: number): bo
 	return content.length > index + 1;
 }
 
-/** 取一段多行文本里最后的 count 个非空行（顺序保持原样，最旧的在前）。 */
-function lastNonEmptyLines(text: string, count: number): string[] {
-	const all = text.split("\n");
-	const picked: string[] = [];
-	for (let i = all.length - 1; i >= 0 && picked.length < count; i--) {
-		const line = all[i]!.trim();
-		if (line) picked.unshift(line);
+/**
+ * 折行：把整段思考文本按终端列宽切成显示行（自然行照旧断开，长行按列硬折）。
+ * 渲染时从末尾取 N 行 = "最后 N 行"——流式时最新内容在末尾，写满一行的溢出会
+ * 顶开上一行往前滚，2 lines 的两行就都是活的，不再只是最后一行在长。
+ */
+function wrapToDisplayRows(text: string, width: number): string[] {
+	const rows: string[] = [];
+	for (const naturalLine of text.split("\n")) {
+		const line = naturalLine.trim();
+		if (!line) continue;
+		const total = visibleWidth(line);
+		if (total <= width) {
+			rows.push(line);
+			continue;
+		}
+		for (let col = 0; col < total; col += width) {
+			rows.push(sliceByColumn(line, col, width, true));
+		}
 	}
-	return picked;
+	return rows;
 }
 
 /**
@@ -589,11 +600,13 @@ function tailTruncate(text: string, maxWidth: number, ellipsis = "…"): string 
 /**
  * 折叠块里的实时内容行：样式跟 pi 原生一致（斜体 + thinkingText 色），
  * 行数由显示方式决定（1 line / 2 lines）；完成后在最后一行末尾追加 dim 色的展开提示。
- * 每行都按终端宽度做尾部截断 —— 流式时最新内容在末尾，保留尾部才看得到进展。
+ * 每次渲染都按当前终端宽度把整段文本从末尾重新折行取 N 行 —— 宽度变化、
+ * 内容增长都会重排，两行跟着最新内容滚动。
  */
 class CollapsedThinkingLine implements Component {
 	constructor(
-		private readonly lines: readonly string[],
+		private readonly text: string,
+		private readonly rowCount: number,
 		private readonly done: boolean,
 		private readonly outputPad: number,
 	) {}
@@ -614,12 +627,17 @@ class CollapsedThinkingLine implements Component {
 		const hintWidth = showHint ? visibleWidth(hintPlain) : 0;
 		const prefix = " ".repeat(paddingX);
 
-		return this.lines.map((text, index) => {
-			const isLast = index === this.lines.length - 1;
-			const bodyPlain = tailTruncate(
-				text,
-				Math.max(1, contentWidth - (isLast ? hintWidth : 0)),
-			);
+		// 按当前内容列宽折行，取最后 rowCount 行 —— 最新内容始终在最后一行。
+		const rows = wrapToDisplayRows(this.text, contentWidth);
+		const picked = rows.slice(Math.max(0, rows.length - this.rowCount));
+		if (picked.length === 0) return [];
+
+		return picked.map((text, index) => {
+			const isLast = index === picked.length - 1;
+			// 折出来的行宽都已 ≤ contentWidth；只有最后一行要让位给展开提示。
+			const bodyPlain = isLast
+				? tailTruncate(text, Math.max(1, contentWidth - hintWidth))
+				: text;
 			const body = theme ? theme.italic(theme.fg("thinkingText", bodyPlain)) : bodyPlain;
 			const hint =
 				isLast && showHint ? (theme ? theme.fg("dim", hintPlain) : hintPlain) : "";
@@ -710,15 +728,13 @@ function applyCollapsedThinking(
 		const inner = child.child;
 		if (!inner || typeof inner.text !== "string") continue;
 
-		const lines = lastNonEmptyLines(run.text, lineCount);
-		if (lines.length === 0) continue;
-
-		// 思考块结束 = 消息不再流式，或它后面已经接上了新块。
 		const done = !streaming || hasBlockAfter(content, run.lastIndex);
-		// 第一行保留 pi 原生的 Thinking...（直接用它的 Text），下面接实时内容。
+		// 把整段文本交给行组件，渲染时再按终端宽度折行取最后 N 行 —— 这样两行
+		// 都跟着流式内容滚动，而不是固定旧行 + 只有最后一行在长。
+		if (!run.text.trim()) continue;
 		child.child = new CollapsedThinkingBlock(
 			inner as unknown as Component,
-			new CollapsedThinkingLine(lines, done, pad),
+			new CollapsedThinkingLine(run.text, lineCount, done, pad),
 		);
 		applied += 1;
 	}
