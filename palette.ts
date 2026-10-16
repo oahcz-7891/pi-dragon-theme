@@ -6,8 +6,8 @@
  *   - `/dragon` 切换后写回配置文件，重启仍生效。
  *
  * 配置文件路径（按优先级）：
- *   1. `$PI_DRAGON_THEME_CONFIG`
- *   2. `<agent dir>/.dragon-theme.json`，agent dir 是 `$PI_CODING_AGENT_DIR`
+ *   1. `$PI_DRAGON_TUI_CONFIG`
+ *   2. `<agent dir>/.dragon-tui.json`，agent dir 是 `$PI_CODING_AGENT_DIR`
  *      或默认的 `~/.pi/agent`
  *
  * 故意不写进扩展自己的目录：扩展目录可能是 git 仓库（会被 git status 看到），
@@ -80,11 +80,11 @@ export function resolvePalette(input: string): Palette | undefined {
 
 /** 配置文件完整路径。 */
 export function configPath(): string {
-	const override = process.env.PI_DRAGON_THEME_CONFIG?.trim();
+	const override = process.env.PI_DRAGON_TUI_CONFIG?.trim();
 	if (override) return override;
 	const agentDir =
 		process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
-	return join(agentDir, ".dragon-theme.json");
+	return join(agentDir, ".dragon-tui.json");
 }
 
 /** 读取整个配置文件；文件不存在 / JSON 坏了 → 空对象。 */

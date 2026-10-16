@@ -22,7 +22,7 @@
  * 在子类里把宽度减 2 交给基类渲染，再补上 │ 与 ╭╮╰╯，得到完整圆角盒子。
  *
  * 安装方式（二选一）：
- *   1. package 方式：pi install /绝对路径/pi-dragon-theme（或 pi install git:github.com/xxx/pi-dragon-theme）
+ *   1. package 方式：pi install /绝对路径/pi-dragon-tui（或 pi install git:github.com/xxx/pi-dragon-tui）
  *   2. 手拷方式：把 index.ts 与 rounded-frame.ts 一起放进 ~/.pi/agent/extensions/
  * 生效方式：重启 pi（首次新增文件），之后改动可用 /reload
  */
@@ -519,7 +519,7 @@ type ThinkingStore = {
 	blocksHandled?: number;
 };
 
-const THINKING_STORE_KEY = Symbol.for("pi-dragon-theme.collapsed-thinking");
+const THINKING_STORE_KEY = Symbol.for("pi-dragon-tui.collapsed-thinking");
 
 /**
  * 存量放在 globalThis 上：prototype 只 patch 一次，而 /reload 会重建整个扩展模块，
@@ -742,7 +742,7 @@ function applyCollapsedThinking(
 }
 
 /** 实例上的 hook 标记，避免同一个组件被包两层。 */
-const ASSISTANT_HOOK = Symbol.for("pi-dragon-theme.assistant-hooked");
+const ASSISTANT_HOOK = Symbol.for("pi-dragon-tui.assistant-hooked");
 
 /** 沿原型链找到定义 addChild 的那层（运行时的 Container.prototype）。 */
 function findAddChildPrototype(value: unknown): Record<string, unknown> | undefined {

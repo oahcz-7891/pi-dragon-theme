@@ -1,4 +1,4 @@
-# pi-dragon-theme
+# pi-dragon-tui
 
 Dragon Ball / Namek-flavored pi extension: rounded editor frame, framed modals, Namekian working spinner, and a tok/s stat.
 
@@ -14,9 +14,9 @@ Dragon Ball / Namek-flavored pi extension: rounded editor frame, framed modals, 
 ## Install
 
 ```bash
-pi install /abs/path/to/pi-dragon-theme
+pi install /abs/path/to/pi-dragon-tui
 # or
-pi install git:github.com/oahcz-7891/pi-dragon-theme
+pi install git:github.com/oahcz-7891/pi-dragon-tui
 ```
 
 Restart pi. Later edits: `/reload`.
@@ -51,6 +51,6 @@ Defaults to `BORDER_HEX` (`#f0c674`, Goku gold). Switching is optional — prefe
 
 The menu stays open while you change things; `Esc` closes it.
 
-Surface text is English; `gold` / `blue` / `green` also work as aliases. The picker uses `ctx.ui.custom()` (`picker.ts`) so it gets the rounded frame too — built-in `select` / `confirm` / `input` / `editor` dialogs bypass `custom()` and cannot be framed. Choices are saved to `<agent dir>/.dragon-theme.json` (`~/.pi/agent/`, overridable via `$PI_CODING_AGENT_DIR` or `$PI_DRAGON_THEME_CONFIG`) and survive restarts; the thinking display is persisted as `thinkingMode` (`"line1"` / `"line2"` / `"hidden"`; the old boolean `collapsedThinking` is still read for compatibility), with the default coming from `THINKING_MODE_DEFAULT`.
+Surface text is English; `gold` / `blue` / `green` also work as aliases. The picker uses `ctx.ui.custom()` (`picker.ts`) so it gets the rounded frame too — built-in `select` / `confirm` / `input` / `editor` dialogs bypass `custom()` and cannot be framed. Choices are saved to `<agent dir>/.dragon-tui.json` (`~/.pi/agent/`, overridable via `$PI_CODING_AGENT_DIR` or `$PI_DRAGON_TUI_CONFIG`) and survive restarts; the thinking display is persisted as `thinkingMode` (`"line1"` / `"line2"` / `"hidden"`; the old boolean `collapsedThinking` is still read for compatibility), with the default coming from `THINKING_MODE_DEFAULT`.
 
 Editor border, modal wrapper, spinner, thinking / bash-mode border, and the `tok/s` status line all read the same mutable color source, so a switch applies on the next frame — no `/reload`, and draft text is kept.

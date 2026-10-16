@@ -187,7 +187,7 @@ export class RoundedFrame implements Component, Focusable {
 }
 
 /** 标记：同一个 uiContext 只包装一次，防止 reload/重复 session_start 叠加多层。 */
-const PATCH_FLAG = Symbol.for("pi-dragon-theme.rounded-custom");
+const PATCH_FLAG = Symbol.for("pi-dragon-tui.rounded-custom");
 
 /**
  * 把共享的 `ctx.ui.custom` 换成包装版。对同一个对象重复调用是幂等的。
