@@ -18,12 +18,14 @@
 		"index.ts",
 		"palette.ts",
 		"picker.ts",
-		"rounded-frame.ts"
+		"rounded-frame.ts",
+		"assets"
 	],
 	"pi": {
 		"extensions": [
 			"./index.ts"
-		]
+		],
+		"image": "https://raw.githubusercontent.com/oahcz-7891/pi-dragon-tui/main/assets/overview.png"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",
